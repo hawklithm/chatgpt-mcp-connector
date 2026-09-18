@@ -1,0 +1,37 @@
+# ---- Agent / WorkBuddy 工作区（含日志、审计、临时文件，绝不入库） ----
+.workbuddy/
+*.log
+
+# ---- 打包产物 ----
+dist/
+*.zip
+
+# ---- Node ----
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ---- 脚本运行时产生的备份 / 隔离 / 中间文件 ----
+# devspace-bootstrap.mjs 写入配置前的自动备份
+*.bak
+# 配置文件损坏时另存的原件
+*.corrupt-*
+# rollback 时保存的当前版本
+*.pre-rollback
+# 原子写入用的临时文件
+*.tmp-*
+*.tmp
+
+# ---- 本地真实配置（可能含 ownerToken 等凭据，严禁入库） ----
+.devspace/
+devspace.config.json
+devspace.auth.json
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
