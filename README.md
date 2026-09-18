@@ -6,6 +6,11 @@
 > 实测环境：Windows 11 + Git Bash · DevSpace `1.0.8` · Tailscale `1.102.4` · Node `24.15.0` ·
 > ChatGPT 新版中文 UI + Plus 账号。
 > 版本差异会影响命令语法（尤其 Tailscale），照做前先跑一遍 `--version`。
+>
+> **平台支持**：Windows / macOS / Linux 三平台都支持，脚本无需改动。
+> 但只有 **Windows 做过实机验证** —— macOS / Linux 的结论来自 DevSpace 源码阅读，未实机跑过。
+> 差异集中在依赖安装方式、shell 解析、Tailscale 服务模型、路径写法四处，
+> 详见 [`references/cross-platform.md`](references/cross-platform.md)。
 
 ---
 
@@ -28,6 +33,7 @@
 | 能力 | 说明 |
 | --- | --- |
 | **环境自检 + 自动补齐** | 7 项依赖（Node / npm / Git / Bash / Tailscale / DevSpace / better-sqlite3）+ 包管理器探测；`--install` 可自动安装缺失项 |
+| **跨平台** | Windows / macOS / Linux 三平台的安装命令、CLI 位置、路径写法、shell 解析、Tailscale 服务模型差异全部处理；脚本按平台分支，**无需改代码** |
 | **配置全自动写入** | 不依赖交互式 `devspace init`，直接按参数写 `config.json`，只改显式传入的键 |
 | **容错与回滚** | 配置损坏**拒绝写盘**并另存 `.corrupt-*`、写前自动 `.bak` 备份、原子替换、超时重试、`rollback` 一键恢复 |
 | **🙋 人工介入点提醒** | 明确标出必须由用户亲自完成的 8 个步骤（浏览器登录、Funnel 批准、填 Owner password 等），检测到未登录/未启用会主动打提醒 |
@@ -40,12 +46,14 @@
 
 | 项 | 要求 | 备注 |
 | --- | --- | --- |
-| 操作系统 | Windows / macOS / Linux | 实测在 Windows 11 + Git Bash |
+| 操作系统 | Windows / macOS / Linux | 三平台均可；**实测在 Windows 11 + Git Bash** |
 | Node.js | `>=20.12 <27` | README 官方口径 `>=22.19 <27`，CLI 内部更宽 |
-| Bash | Git Bash ★ / MSYS2 / Cygwin / WSL / PortableGit | Windows 上常并存多个，选错会导致 DevSpace 行为异常 |
+| Bash | Windows：**必须** Git Bash ★ / MSYS2 / Cygwin / WSL / PortableGit<br>macOS / Linux：`/bin/bash`（一般自带） | Windows 上常并存多个，选错会导致 DevSpace 行为异常；**Windows 缺 bash 直接失败**（无兜底），macOS/Linux 会退化 `/bin/sh` |
 | Git | 任意近期版本 | — |
-| Tailscale | `1.102.4` 实测可用 | 需登录且开启 MagicDNS |
+| Tailscale | `1.102.4` 实测可用 | 需登录且开启 MagicDNS；Linux 上 CLI 默认要 root，建议 `--operator` |
 | ChatGPT | 网页版 + 付费账号，需开启**开发者模式** | 连接器功能需要 |
+
+> 平台差异速查（安装命令 / CLI 位置 / 路径写法 / 常见坑）见 [`references/cross-platform.md`](references/cross-platform.md)。
 
 以上全部可以由 `env-check.mjs --install` 自动检查并补齐（安装时可能弹 UAC 提权）。
 
@@ -130,7 +138,8 @@ flowchart LR
 chatgpt-mcp-connector/
 ├── SKILL.md                        # 主文件：触发条件、0→1 流程、铁律、参考导航
 ├── references/                     # 分阶段详细文档（按需加载，不占主上下文）
-│   ├── env-setup.md                # 阶段 0–1：依赖清单、各平台安装、装后两个坑
+│   ├── cross-platform.md           # 三平台对照：安装命令、路径、shell、Tailscale 服务模型、各平台坑
+│   ├── env-setup.md                # 阶段 0–1：依赖清单、各平台安装、装完之后的环境坑
 │   ├── tailscale-funnel.md         # 阶段 2–3：登录、Funnel 前置条件与语法、域名推导
 │   ├── devspace-config.md          # 阶段 4–5：两个配置文件、环境变量总表、OAuth 持久化
 │   ├── chatgpt-connector.md        # 阶段 6：建连接器步骤、浏览器自动化要点
@@ -233,6 +242,10 @@ node $SK/devspace-bootstrap.mjs rollback [--config|--auth]   # 从 .bak 恢复
 | 隧道域名变了、连接器连不上 | `references/tailscale-funnel.md`，重建或 Refresh 连接器 |
 | 配置文件损坏 / 想回退改动 | `references/troubleshooting.md`，用 `rollback` |
 | Funnel 用不了 | `references/troubleshooting.md` 的降级路径（cloudflared） |
+| 装了却说「找不到命令」 | `references/cross-platform.md`（PATH 未刷新 / Homebrew 不在 PATH / npm 全局命令目录不在 PATH） |
+| Linux 上 `tailscale` 报权限错误 | `sudo tailscale up --operator=$USER`，见 `references/cross-platform.md` |
+| 路径在白名单里却报 `path is outside allowed roots` | Linux 大小写敏感：`~/Projects` 与 `~/projects` 是两个目录 |
+| ChatGPT 里看不到 `download_artifact` 工具 | 正常 —— 该工具只在 Linux 上注册 |
 
 ---
 

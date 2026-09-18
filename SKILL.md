@@ -1,6 +1,6 @@
 ---
 name: chatgpt-mcp-connector
-description: "从 0 到 1 把本地 MCP 服务器（DevSpace）接入 ChatGPT 网页版：自检并补齐环境依赖（Node/npm/Git/Bash/Tailscale，缺失可自动安装）→ 装 DevSpace → 开 Tailscale Funnel 公网隧道 → 写配置 → 在 ChatGPT 插件页建自定义连接器并完成 OAuth 授权。含容错：配置损坏拒绝写盘、自动备份与回滚（.bak/rollback）、原子写入、超时重试、临时隧道降级、错误分级。并明确标出必须由用户人工完成的步骤（Tailscale 浏览器登录、Funnel 首次批准、ChatGPT 建连接器与填 Owner password 授权），脚本检测到未登录/未启用会打 🙋 主动提醒用户操作。也用于诊断 'does not implement OAuth' / 'Something went wrong' / invalid_client / path is outside allowed roots / 配置文件损坏等问题。"
+description: "从 0 到 1 把本地 MCP 服务器（DevSpace）接入 ChatGPT 网页版：自检并补齐环境依赖（Node/npm/Git/Bash/Tailscale，缺失可自动安装）→ 装 DevSpace → 开 Tailscale Funnel 公网隧道 → 写配置 → 在 ChatGPT 插件页建自定义连接器并完成 OAuth 授权。支持 Windows / macOS / Linux 三平台（各平台的安装命令、路径写法、shell 解析、Tailscale 服务模型差异均已处理，macOS/Linux 未实机验证）。含容错：配置损坏拒绝写盘、自动备份与回滚（.bak/rollback）、原子写入、超时重试、临时隧道降级、错误分级。并明确标出必须由用户人工完成的步骤（Tailscale 浏览器登录、Funnel 首次批准、ChatGPT 建连接器与填 Owner password 授权），脚本检测到未登录/未启用会打 🙋 主动提醒用户操作。也用于诊断 'does not implement OAuth' / 'Something went wrong' / invalid_client / path is outside allowed roots / 配置文件损坏等问题。"
 agent_created: true
 ---
 
@@ -13,12 +13,19 @@ agent_created: true
 Node `24.15.0`，ChatGPT 新版中文 UI + Plus 账号。
 版本差异会影响命令语法（尤其 Tailscale），照做前先跑一遍 `--version`。
 
+**平台支持**：Windows / macOS / Linux 三平台都支持，脚本无需改动。
+差异集中在**依赖安装方式、shell 解析、Tailscale 服务模型、路径写法**四处 ——
+见 `references/cross-platform.md`。
+⚠️ 只有 Windows 做过实机验证；macOS / Linux 的结论来自 DevSpace 源码，**未实机跑过**，
+实机结果与文档不符时以实际输出为准。
+
 ## 何时使用
 
 - 「让 ChatGPT 网页版驱动本地 codex / 读我本地项目」「把本地 MCP 接到 ChatGPT」
 - 报错 `MCP server ... does not implement OAuth` / `Something went wrong...`
 - 隧道域名变了、`devspace serve` 重启后 ChatGPT 连不上，要重建或 Refresh 连接器
 - 要让 ChatGPT 换一个可访问目录（见 `references/devspace-config.md`）
+- **在 macOS / Linux 上部署**（安装方式、路径写法、Tailscale 权限模型都不一样）
 - **改了配置想回退**（`rollback`）、**动配置前想先预演**（`apply --dry-run`）、
   **`config.json` / `auth.json` 损坏或被截断**（脚本会拒绝写盘并另存 `.corrupt-*`）
 - Funnel 用不了、想换别的公网暴露方式（见 `references/troubleshooting.md` 降级路径）
@@ -188,8 +195,9 @@ Owner password = `~/.devspace/auth.json` 里的 `ownerToken`（43 字符明文�
 
 | 文件 | 内容 | 何时读 |
 | --- | --- | --- |
-| `references/env-setup.md` | 依赖清单与要求、各平台安装命令、装完的两个坑、DevSpace 安装与常见问题、CLI 命令面 | 阶段 0–1，或依赖装不上时 |
-| `references/tailscale-funnel.md` | Tailscale 安装/登录、版本要求、Funnel 前置条件与语法、域名推导、关闭隧道、降级方案 | 阶段 2–3，或隧道不通时 |
+| `references/cross-platform.md` | **三平台对照**：依赖安装命令、路径写法、shell 解析、Tailscale 服务模型、平台差异功能（如 `download_artifact` 仅 Linux）、各平台最容易踩的坑 | **在 macOS / Linux 上操作时先读这个**；或遇到「装了却说找不到命令」这类环境问题时 |
+| `references/env-setup.md` | 依赖清单与要求、各平台安装命令、装完之后的环境坑（PATH 刷新 / Windows npm shim / macOS Homebrew shellenv / Linux nvm）、DevSpace 安装与常见问题、CLI 命令面 | 阶段 0–1，或依赖装不上时 |
+| `references/tailscale-funnel.md` | Tailscale 安装/登录（含三平台服务模型）、版本要求、Funnel 前置条件与语法、域名推导、关闭隧道、降级方案 | 阶段 2–3，或隧道不通时 |
 | `references/devspace-config.md` | 两个配置文件、全自动写配置机制、解析优先级、环境变量总表、allowedRoots、启动与健康检查、OAuth 持久化 | 阶段 4–5，或要改配置/查变量时 |
 | `references/chatgpt-connector.md` | 建连接器完整步骤与字段、成功判据、在对话里使用、browser-harness 自动化要点、收尾 | 阶段 6，或连接器报错时 |
 | `references/troubleshooting.md` | 容错设计（五原则/错误分级/阶段恢复表/降级/回滚）、故障速查表、已证伪的伪根因 | **出任何问题时先读这个** |

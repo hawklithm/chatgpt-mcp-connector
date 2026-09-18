@@ -2,6 +2,7 @@
 
 > 阶段 2 = 安装并登录 Tailscale；阶段 3 = 开公网隧道。
 > 主流程见 SKILL.md；本文件是这两步的完整细节。
+> **三平台的安装方式、CLI 位置、服务模型差异见 `references/cross-platform.md`。**
 
 ## 为什么必须用 Tailscale Funnel
 
@@ -17,14 +18,19 @@ Tailscale **Serve 不行**（只在 tailnet 内可见），必须用 **Funnel**�
 | Windows（推荐，实测可用） | `winget install -e --id Tailscale.Tailscale` |
 | Windows 静默（自动化） | `winget install -e --id Tailscale.Tailscale --silent --accept-package-agreements --accept-source-agreements` |
 | Windows 手动 | 从 `tailscale.com/download/windows` 下 `.msi` |
-| macOS | `brew install --cask tailscale` |
+| macOS | `brew install --cask tailscale`（会要求管理员密码，**正常**，不是卡死） |
 | Linux | `curl -fsSL https://tailscale.com/install.sh \| sh` |
 
-> Windows 上 **Tailscale CLI 不在 PATH**，默认路径是
-> `C:\Program Files\Tailscale\tailscale.exe`。脚本里用绝对路径，或直接
-> `& "C:\Program Files\Tailscale\tailscale.exe" status`。
-> 但也要注意：某些安装方式（scoop / winget）可能装成 `.cmd` shim ——
-> 调用时要兼容 `.cmd`（见 `references/env-setup.md` 里 shell 引号那个坑）。
+**CLI 在哪 —— 三平台不一样，照平台取：**
+
+| 平台 | CLI 位置 | 是否在 PATH |
+| --- | --- | --- |
+| Windows | `C:\Program Files\Tailscale\tailscale.exe` | ❌ **不在**。脚本里用绝对路径，或 `& "C:\Program Files\Tailscale\tailscale.exe" status`。某些安装方式（scoop / winget）会装成 `.cmd` shim，调用要兼容 `.cmd`（见 `references/env-setup.md` 的 shell 引号坑） |
+| macOS | `brew install tailscale` → `/usr/local/bin`（Intel）或 `/opt/homebrew/bin`（Apple Silicon） | ✅ 在 |
+| macOS（App Store / 独立 App 版） | `/Applications/Tailscale.app/Contents/MacOS/Tailscale` | ❌ **不在**，必须写全路径 |
+| Linux | `/usr/bin/tailscale`（官方脚本）、`/usr/sbin`（发行版包）、`/snap/bin`（snap） | ✅ 在 |
+
+本技能两个脚本的候选表已覆盖以上全部路径（`findTailscale()` / `checkTailscale()`）。
 
 ### 登录
 
@@ -33,6 +39,14 @@ tailscale up          # 打印一个 URL，浏览器里登录授权（会加进 
 tailscale status      # 确认本机出现在列表里
 tailscale ip -4       # 本机的 Tailscale IPv4（100.x.y.z）
 ```
+
+**服务模型三平台不同 —— 先看这一行，否则最容易卡在「命令跑不动」：**
+
+| 平台 | 先做什么 | 常见报错 |
+| --- | --- | --- |
+| Windows | 确认托盘图标在运行（客户端是常驻 GUI 程序） | `failed to connect` |
+| macOS | 先启动 Tailscale App（菜单栏图标）；CLI 不在 PATH 时用 `/Applications/Tailscale.app/Contents/MacOS/Tailscale` | `command not found` |
+| Linux | `sudo systemctl enable --now tailscaled` 确保守护进程在跑；用 `sudo tailscale up --operator=$USER` —— **加了 `--operator` 之后就不用每次都 sudo** | `access denied` / `permission denied` |
 
 > 🙋 **需要用户操作**：`tailscale up` 会在终端打印一个登录链接 ——
 > **必须由用户用浏览器打开、登录并授权该设备加入 tailnet**。这一步脚本做不了，
@@ -106,7 +120,8 @@ tailscale funnel --https=443 off  # 仅老版本；新版本 help 里已无此�
 ### 自动拿到隧道域名（不要让人手抄）
 
 ```bash
-"C:/Program Files/Tailscale/tailscale.exe" status --json
+tailscale status --json                                     # macOS / Linux：CLI 在 PATH
+"C:/Program Files/Tailscale/tailscale.exe" status --json    # Windows：CLI 不在 PATH，写全路径
 ```
 
 关键字段（实测）：

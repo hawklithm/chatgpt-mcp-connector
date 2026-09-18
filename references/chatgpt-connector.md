@@ -78,12 +78,15 @@ UI 侧：插件页「已安装」出现 `DevSpace`，详情页显示 `在聊天�
 新开一个对话，从工具菜单挂上 DevSpace，然后给**绝对路径**（别让它猜）：
 
 ```
-用 DevSpace 打开本地工作区：D:\projects\my-app\<项目名>
+用 DevSpace 打开本地工作区：D:\projects\my-app\<项目名>          （Windows）
+用 DevSpace 打开本地工作区：/home/you/projects/my-app/<项目名>    （macOS / Linux）
 
 只读，不要改文件、不要跑有副作用的命令。
 先读根目录的 AGENTS.md / CLAUDE.md（如果存在），然后告诉我：
 1. 技术栈；2. 启动与测试命令；3. 当前 git 状态；4. 你实际读了哪些文件。
 ```
+
+> 路径必须是**本机原生写法**：Windows 用反斜杠（`D:\...`），macOS / Linux 用正斜杠（`/home/...`）。
 
 同一会话内 `open_workspace` 返回的 `workspace_id` 要一直复用；
 白名单内可以自由切换/打开多个 workspace（各有独立 `workspace_id`）。
@@ -123,7 +126,9 @@ UI 侧：插件页「已安装」出现 `DevSpace`，详情页显示 `在聊天�
 ## 收尾
 
 - **`devspace serve` 必须常驻**；agent 会话结束后需在终端手动起。
-  想开机自启可用任务计划程序 / `nssm` / systemd，把启动命令指向绝对路径的 `cli.js`。
+  开机自启按平台选：Windows 用任务计划程序 / `nssm`，macOS 用 `launchd`（`~/Library/LaunchAgents/*.plist`），
+  Linux 用 `systemd`（user 或 system unit）。启动命令一律指向**绝对路径的 `dist/cli.js`**：
+  `node "$(npm root -g)/@waishnav/devspace/dist/cli.js" serve`（三平台通用）。
 - 用完关公网入口：`tailscale funnel reset`。
 - ChatGPT 侧：连接器详情页可以 **Refresh** 重新拉取工具列表；改完 URL 记得 Refresh + 新开对话。
 - 插件建好了但新对话里看不到工具 → 打开连接详情 → **Refresh** → 再新开一个对话。

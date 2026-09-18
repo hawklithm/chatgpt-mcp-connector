@@ -29,6 +29,14 @@
  *     检测到这类情况（Tailscale 未登录、Funnel 未启用…）会就地打 🙋 提示，
  *     并在输出末尾统一汇总，避免 agent 一路干等到卡住才发现。
  *
+ * 跨平台（Windows / macOS / Linux）：
+ *   - 配置目录三平台都是 `~/.devspace`（Windows 即 `C:\Users\<你>\.devspace`），由 DevSpace 自身决定，
+ *     本脚本只用 os.homedir() 拼接，不做平台分支。
+ *   - `--roots` 去重时按平台决定是否大小写不敏感：Windows/macOS 不敏感，**Linux 敏感**
+ *     （弄错会静默丢掉一个白名单目录）。见 CASE_INSENSITIVE_FS。
+ *   - tailscale 的候选路径与「未登录怎么办」的提示都按平台给出，见 findTailscale / tailscaleUpHint。
+ * 细节见 references/cross-platform.md。
+ *
  * 退出码：0 成功；1 出错（含前置条件不满足 / 配置损坏）。
  */
 
@@ -43,6 +51,36 @@ const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
 const AUTH_PATH = join(CONFIG_DIR, 'auth.json');
 
 const IS_WIN = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
+
+/**
+ * 文件系统是否大小写不敏感。
+ *
+ * Windows 的 NTFS 和 macOS 默认的 APFS/HFS+ 都不敏感；Linux 的 ext4/xfs 敏感。
+ * 这个常量决定 allowedRoots 去重时**能不能把路径转小写比较** ——
+ * 弄错会静默丢掉一个白名单目录（Linux 上 ~/Projects 与 ~/projects 是两个不同的目录）。
+ */
+const CASE_INSENSITIVE_FS = IS_WIN || IS_MAC;
+
+/**
+ * Tailscale 未运行 / 未登录时的处置建议。
+ *
+ * 三个平台的服务模型不同，不能一句话打发：
+ *   Windows —— 常驻托盘程序，登录靠它自己弹浏览器；
+ *   macOS   —— GUI App（菜单栏图标），CLI 还可能藏在 app bundle 里不在 PATH；
+ *   Linux   —— systemd 守护进程（tailscaled），CLI 默认要 root，官方建议用 --operator 交给当前用户。
+ *
+ * 与 env-check.mjs 里的同名逻辑保持一致（两个脚本各自独立可跑，所以是有意重复的）。
+ */
+function tailscaleUpHint() {
+  if (IS_WIN) {
+    return '启动 Tailscale（Windows 托盘图标）后执行 `tailscale up` —— 它会打印一个链接，用浏览器打开完成授权';
+  }
+  if (IS_MAC) {
+    return '启动 Tailscale App（菜单栏图标）后执行 `tailscale up`；若提示命令不存在，CLI 在 /Applications/Tailscale.app/Contents/MacOS/Tailscale';
+  }
+  return '先确认守护进程在跑（`sudo systemctl enable --now tailscaled`），再执行 `sudo tailscale up --operator=$USER` —— 加了 --operator 之后就不用每次 sudo';
+}
 
 const log = (...a) => console.log(...a);
 const ok = (m) => console.log(`  [ok]   ${m}`);
@@ -151,9 +189,20 @@ function run(bin, args, extra = {}) {
 
 /** 定位 tailscale 可执行文件。Windows 上 CLI 常不在 PATH，先用默认安装路径。 */
 function findTailscale() {
+  // 候选表与 env-check.mjs 保持一致 —— 两个脚本若给出不同的结论，用户会以为其中一个是坏的。
   const candidates = IS_WIN
     ? [join(process.env['ProgramFiles'] || 'C:\\Program Files', 'Tailscale', 'tailscale.exe')]
-    : ['/usr/bin/tailscale', '/usr/local/bin/tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'];
+    : [
+        // macOS：Homebrew / 官方 pkg；独立 App 与 App Store 版的 CLI 在 bundle 内、不在 PATH
+        '/usr/local/bin/tailscale',
+        '/opt/homebrew/bin/tailscale',
+        '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+        // Linux：官方脚本 → /usr/bin，发行版包 → /usr/sbin，snap → /snap/bin
+        '/usr/bin/tailscale',
+        '/usr/local/bin/tailscale',
+        '/usr/sbin/tailscale',
+        '/snap/bin/tailscale',
+      ];
   for (const c of candidates) if (existsSync(c)) return c;
   // 兜底：交给 PATH（把 .cmd shim 也试一遍，Windows 上很常见）
   const names = IS_WIN ? ['tailscale.exe', 'tailscale.cmd', 'tailscale.bat', 'tailscale'] : ['tailscale'];
@@ -220,7 +269,7 @@ function doctor() {
       log(`         ChatGPT 里要填的 MCP 端点: ${origin}/mcp`);
     } catch (e) {
       fail(`无法推导 Funnel 域名: ${errLine(e)}`);
-      ask('Tailscale 未就绪 —— 执行 `tailscale up`（会打印一个链接，用浏览器打开完成授权）；若已登录，检查 Tailscale 客户端/服务是否在运行');
+      ask(`Tailscale 未就绪 —— ${tailscaleUpHint()}`);
     }
 
     try {
@@ -231,8 +280,10 @@ function doctor() {
         lines.forEach((l) => log(`         ${l}`));
       } else {
         warn('Funnel 未配置');
-        log('        命令: tailscale funnel --bg 7676');
-        ask('起隧道需要执行 `tailscale funnel --bg 7676`；**若是首次启用 Funnel**，终端会另给一个批准链接，也要你去浏览器点同意');
+        // 命令本身三平台一致；差别在 Linux 上 CLI 默认要 root（除非 up 时带过 --operator）
+        const funnelCmd = IS_WIN || IS_MAC ? 'tailscale funnel --bg 7676' : 'tailscale funnel --bg 7676（未设 --operator 时要 sudo）';
+        log(`        命令: ${funnelCmd}`);
+        ask(`起隧道需要执行 \`tailscale funnel --bg 7676\`；**若是首次启用 Funnel**，终端会另给一个批准链接，也要你去浏览器点同意`);
       }
     } catch {
       warn('funnel status 读取失败（可能未启用 Funnel）');
@@ -380,29 +431,47 @@ function apply(args) {
 
   if (typeof args.roots === 'string') {
     const roots = args.roots.split(',').map((s) => s.trim()).filter(Boolean);
+
+    // macOS / Linux 的路径用正斜杠。传了反斜杠基本是从 Windows 文档里直接抄过来的，
+    // 在 POSIX 上会被当成「名字里带反斜杠的文件名」，目录当然不存在 —— 明确提示比让人猜好。
+    if (!IS_WIN) {
+      for (const r of roots) {
+        if (r.includes('\\')) warn(`路径含反斜杠：${r} —— macOS / Linux 用正斜杠（如 /home/you/projects），这个路径多半不对`);
+      }
+    }
+
     // 展开 ~ 后统一 resolve() 归一化。
     // 原因：Git Bash / MSYS 会把 D:\x 这种参数自动改写成 D:/x（路径转换），
     // 直接用会让写进配置的路径形式不稳定，进而破坏下面的幂等比较。
-    // resolve() 在 Windows 上会统一成 D:\x 的反斜杠绝对路径形式。
+    // resolve() 在 Windows 上统一成 D:\x，在 POSIX 上统一成正斜杠绝对路径。
     const homeExpanded = roots
       .map((r) =>
         r === '~' ? homedir() : r.startsWith('~/') || r.startsWith('~\\') ? join(homedir(), r.slice(2)) : r
       )
       .map((r) => resolvePath(r));
-    // 去重（Windows 大小写不敏感：D:\x 与 d:\X 是同一个目录）
+
+    // 去重。大小写敏感与否**按平台判断**：
+    // 无条件 toLowerCase() 在 Linux 上会把 ~/Projects 与 ~/projects 当成同一个目录，
+    // 静默丢掉一个白名单项 —— 而它们在 ext4 上是两个完全不同的目录。
     const seen = new Set();
     const unique = homeExpanded.filter((r) => {
-      const k = r.toLowerCase();
+      const k = CASE_INSENSITIVE_FS ? r.toLowerCase() : r;
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
     });
+
+    const home = resolvePath(homedir());
     for (const r of unique) {
       if (!existsSync(r)) warn(`根目录不存在（先建好再启动，否则 serve 会报 path 不在白名单）：${r}`);
       if (/^[a-z]:\\?$/i.test(r) || r === '/') {
         warn(`--roots 指向盘符/系统根：${r} —— 等于把整盘交出去，强烈建议改成具体项目目录`);
+      } else if (r === home) {
+        // 主目录同样危险，而且更隐蔽：里面有 .ssh / .aws / .devspace/auth.json 等凭据文件
+        warn(`--roots 指向用户主目录：${r} —— 主目录下有 .ssh / .aws 等凭据，等于一起交出去，请改成具体项目目录`);
       }
     }
+
     cfg.allowedRoots = unique;
     ok(`allowedRoots = ${unique.join(', ')}`);
   } else if (!cfg.allowedRoots) {

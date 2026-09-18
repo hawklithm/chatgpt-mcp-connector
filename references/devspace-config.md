@@ -3,6 +3,7 @@
 > 阶段 4 = 写配置；阶段 5 = 启动服务。另含**环境变量总表**、**换可访问目录**、
 > **重启与 OAuth 持久化**三个横切主题。
 > 主流程见 SKILL.md；本文件是完整细节。
+> **路径写法、大小写敏感性、状态目录的平台差异见 `references/cross-platform.md`。**
 
 下文用到的脚本目录变量（与 SKILL.md 一致）：
 
@@ -12,7 +13,15 @@ SK=~/.workbuddy/skills/chatgpt-mcp-connector/scripts
 
 ## 阶段 4：写 DevSpace 配置
 
-产物就两个文件（都在 `~/.devspace/`，Windows：`C:\Users\<你>\.devspace\`）：
+产物就两个文件，都在 DevSpace 的**配置目录**里（源码 `devspaceConfigDir()` = `DEVSPACE_CONFIG_DIR` ?? `~/.devspace`）：
+
+| 平台 | 配置目录 |
+| --- | --- |
+| Windows | `C:\Users\<你>\.devspace\` |
+| macOS | `/Users/<你>/.devspace/` |
+| Linux | `/home/<你>/.devspace/` |
+
+两个文件：
 
 - `config.json` — `host` / `port` / `publicBaseUrl` / `allowedRoots` / `subagents` / …
 - `auth.json` — `{ "ownerToken": "<43 字符>" }`，即授权页要填的 **Owner password**
@@ -48,7 +57,8 @@ await runInit({ force: false });
 推荐用自带脚本（它会保留已有 ownerToken、幂等、写前备份）：
 
 ```bash
-node $SK/devspace-bootstrap.mjs apply --roots "D:\projects\my-app"
+node $SK/devspace-bootstrap.mjs apply --roots "D:\projects\my-app"          # Windows
+node $SK/devspace-bootstrap.mjs apply --roots "/home/you/projects/my-app"   # macOS / Linux
 ```
 
 或手写。`ownerToken` 的生成方式与官方一致（`dist/user-config.js`）：
@@ -112,11 +122,15 @@ curl -s https://<域名>/.well-known/oauth-protected-resource/mcp               
 ## 换可访问目录（allowedRoots）
 
 ```bash
-# A. 环境变量（临时/脚本，逗号分隔，优先级最高）
-DEVSPACE_ALLOWED_ROOTS="D:\\projects\\my-app,D:\\workspace" devspace serve
+# A. 环境变量（临时/脚本，优先级最高）
+#    ⚠️ 分隔符【三平台都是逗号】—— 不是 Windows 的 ; 也不是 PATH 的 :（源码里统一 split(",")）
+DEVSPACE_ALLOWED_ROOTS="D:\\projects\\my-app,D:\\workspace" devspace serve     # Windows
+DEVSPACE_ALLOWED_ROOTS="/home/you/projects/my-app,/srv/repos" devspace serve   # macOS / Linux
 
-# B. 写进 ~/.devspace/config.json（持久，推荐）—— JSON 里反斜杠要转义
-# { "allowedRoots": ["D:\\projects\\my-app"] }
+# B. 写进配置目录下的 config.json（持久，推荐）
+#    Windows 的 JSON 里反斜杠要转义；macOS / Linux 用正斜杠
+# { "allowedRoots": ["D:\\projects\\my-app"] }       ← Windows
+# { "allowedRoots": ["/home/you/projects/my-app"] }  ← macOS / Linux
 ```
 
 改完**必须重启 `devspace serve`**（配置只在启动时读一次）。
@@ -126,9 +140,13 @@ DEVSPACE_ALLOWED_ROOTS="D:\\projects\\my-app,D:\\workspace" devspace serve
 推荐用脚本（幂等、自动归一化、会告警盘符级白名单）：
 
 ```bash
-node $SK/devspace-bootstrap.mjs apply --roots "D:\projects\my-app" --dry-run   # 先预演
-node $SK/devspace-bootstrap.mjs apply --roots "D:\projects\my-app"            # 再落盘
+node $SK/devspace-bootstrap.mjs apply --roots "D:\projects\my-app" --dry-run   # 先预演（Windows）
+node $SK/devspace-bootstrap.mjs apply --roots "D:\projects\my-app"            # 再落盘（Windows）
+# macOS / Linux 把路径换成 /home/you/projects/my-app 这种正斜杠写法即可
 ```
+
+> **大小写敏感性按平台不同**：Windows 与 macOS 的文件系统不敏感（`~/Projects` 与 `~/projects` 同一个），
+> Linux 敏感（是**两个不同目录**）。脚本的去重逻辑已按平台处理，别手动去重时按小写合并。
 
 ### ⚠️ Git Bash 会把 `D:\x` 改写成 `D:/x`
 
@@ -158,7 +176,18 @@ Node 的 path 解析两者等价，**功能不受影响**，但会让「内容�
 | `DEVSPACE_LOG_FORMAT` | `json` / `pretty` | `json` |
 | `DEVSPACE_LOG_REQUESTS` / `_ASSETS` / `_TOOL_CALLS` / `_SHELL_COMMANDS` | 各类日志开关 | 见源码 |
 | `DEVSPACE_TRUST_PROXY` | 开 Express trust proxy | `false` |
+| `DEVSPACE_CONFIG_DIR` | **配置目录**（放 `config.json` / `auth.json`） | `~/.devspace` |
+| `DEVSPACE_ARTIFACTS` | 开关 `download_artifact` 工具 | 配置文件 |
+| `DEVSPACE_ARTIFACT_MAX_FILE_BYTES` | 单个附件大小上限 | 内置默认 |
+| `DEVSPACE_AGENT_DIR` | 本地子代理目录 | `~/.codex` |
+| `DEVSPACE_SKILLS` / `DEVSPACE_SKILL_PATHS` | skills 开关 / 搜索路径（**逗号**分隔） | — |
+| `DEVSPACE_MINIMAL_TOOLS` | 工具集裁剪 | 见源码 |
 | `PORT` / `HOST` | 监听端口 / 地址 | 配置文件 / `7676` / `127.0.0.1` |
+
+> **`download_artifact` 只在 Linux 上注册。** 源码 `ARTIFACT_DOWNLOAD_PLATFORMS = new Set(["linux"])`，
+> 在 Windows / macOS 上这个工具**根本不会出现**（`devspace doctor` 会显示 `unsupported on win32` / `unsupported on darwin`）。
+> 它影响的是「让 ChatGPT 把它那边的附件直接落到你本机」这一条路；普通读写文件不受影响。
+> 详见 `references/cross-platform.md`。
 
 > 临时隧道示例（官方 help 原文）：
 > `DEVSPACE_PUBLIC_BASE_URL=https://example.trycloudflare.com devspace serve`
@@ -170,6 +199,11 @@ Node 的 path 解析两者等价，**功能不受影响**，但会让「内容�
 
 > **stateDir 默认是 `~/.local/share/devspace/`，不是 `~/.devspace/`**
 > （后者只有 `config.json` + `auth.json`）。
+>
+> 三平台**完全一样**：Windows 是 `C:\Users\<你>\.local\share\devspace\`，
+> macOS 是 `/Users/<你>/.local/share/devspace/`（**不是** `~/Library/Application Support`）。
+> 源码 `defaultStateDir()` 写死 `join(homedir(), '.local','share','devspace')`，
+> **不读 `XDG_DATA_HOME`** —— Linux 上想挪地方只能用 `DEVSPACE_STATE_DIR`。
 
 `dist/oauth-store.js` 的 `SqliteOAuthStore` 用了这几张表：
 
@@ -185,12 +219,26 @@ Node 的 path 解析两者等价，**功能不受影响**，但会让「内容�
 查看方法（借用 devspace 自带的 better-sqlite3，**只读**打开）：
 
 ```js
-const req = require('module').createRequire('C:/Users/<你>/AppData/Roaming/npm/node_modules/@waishnav/devspace/package.json');
+// 借用 devspace 自带的 better-sqlite3，**只读**打开。
+// 路径全部推导出来，不要写死盘符 —— 这样三平台都能直接跑。
+const { createRequire } = require('module');
+const { execFileSync } = require('child_process');
+const { join } = require('path');
+const { homedir } = require('os');
+
+const globalRoot = execFileSync('npm', ['root', '-g'], { encoding: 'utf8' }).trim();
+const req = createRequire(join(globalRoot, '@waishnav/devspace', 'package.json'));
 const Database = req('better-sqlite3');
-const db = new Database('C:/Users/<你>/.local/share/devspace/devspace.sqlite', { readonly: true });
+
+// 状态目录三平台都是 ~/.local/share/devspace（且不遵循 XDG_DATA_HOME）
+const dbFile = join(homedir(), '.local', 'share', 'devspace', 'devspace.sqlite');
+const db = new Database(dbFile, { readonly: true });
+
 console.log(db.prepare('select client_id, client_json from oauth_clients').all());
 console.log(db.prepare('select client_id, expires_at from oauth_refresh_tokens').all());
 ```
+
+> 若改过 `DEVSPACE_STATE_DIR`，把 `dbFile` 换成那个目录下的 `devspace.sqlite`。
 
 **验证重启后授权仍有效的正确姿势**：拿库里的 ChatGPT `client_id` 走一次 `/authorize`，
 带**全参数**，期望 **200** 且渲染出 `Connect DevSpace` 页面：

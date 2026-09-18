@@ -1,0 +1,221 @@
+# 跨平台兼容（Windows / macOS / Linux）
+
+> 三个平台都能用，差异集中在**四处**：依赖安装方式、shell 的解析、Tailscale 的服务模型、路径写法。
+> 本文把这些差异集中列出来；各阶段的完整操作仍在对应 reference 里，这里只讲「哪不一样、注意什么」。
+
+**结论来源与可信度**（重要）：
+
+| 内容 | 依据 | 可信度 |
+| --- | --- | --- |
+| shell 解析、平台门控、目录默认值 | DevSpace `1.0.8` 源码：`dist/config.js`、`dist/roots.js`、`dist/user-config.js`、`dist/process-platform.js`、`dist/artifact-tools.js`、`node_modules/@earendil-works/pi-coding-agent/dist/utils/shell.js` | 读源码确认 |
+| Windows 全流程 | 实机跑通（Windows 11 + Git Bash） | ✅ 已实测 |
+| macOS / Linux 的「坑」与安装命令 | 官方文档 + 源码推断 | ⚠️ **未实机验证** |
+
+> macOS / Linux 上跑出与本文不符的结果时，**以实际输出为准**，并把差异回报过来。
+
+---
+
+## 一、平台支持一览
+
+| 能力 | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| DevSpace 本体（`package.json` 无 `os`/`cpu` 限制） | ✅ | ✅ | ✅ |
+| shell 工具实际用哪个 shell | **强制 Git Bash** | `/bin/bash`（存在即用） | `/bin/bash`（存在即用） |
+| 找不到 bash 时 | ❌ 直接抛 `No bash shell found`，**无兜底** | 退化 `/bin/sh` | 退化 `/bin/sh` |
+| `download_artifact`（把 ChatGPT 里的文件落到本机） | ❌ 未注册 | ❌ 未注册 | ✅ **仅 Linux** |
+| 进程树终止方式 | `taskkill /T /F` | `kill(-pid)` | `kill(-pid)` |
+| 配置文件目录 | `C:\Users\<你>\.devspace` | `/Users/<你>/.devspace` | `/home/<你>/.devspace` |
+| 状态目录（SQLite） | `C:\Users\<你>\.local\share\devspace` | `/Users/<你>/.local/share/devspace` | `/home/<你>/.local/share/devspace` |
+| 平台适配脚本检查项 | 全部 | 全部 | 全部 |
+
+### 两个值得单独拎出来的结论
+
+**① `download_artifact` 只在 Linux 上注册。**
+源码里 `ARTIFACT_DOWNLOAD_PLATFORMS = new Set(["linux"])`。在 Windows / macOS 上这个工具**根本不会出现**
+（`devspace doctor` 会显示 `artifact download: unsupported on win32` / `unsupported on darwin`）。
+这影响的是「让 ChatGPT 把它那边的附件直接写到你本机」这一条路 —— 普通读写文件不受影响。
+
+**② 状态目录三平台完全一致，且不遵循 XDG。**
+`defaultStateDir()` 是写死的 `join(homedir(), '.local', 'share', 'devspace')`，
+**不读 `XDG_DATA_HOME`**，macOS 上也不用 `~/Library/Application Support`。
+Linux 用户按 XDG 规范去 `~/.local/share` 找是对的，但改了 `XDG_DATA_HOME` 不会生效 —— 要用 `DEVSPACE_STATE_DIR` 显式指定。
+
+---
+
+## 二、shell 是怎么被选中的（最容易出问题的一环）
+
+DevSpace 的 shell 工具解析顺序（源码 `pi-coding-agent/dist/utils/shell.js`）：
+
+| 平台 | 顺序 |
+| --- | --- |
+| **Windows** | ① `%ProgramFiles%\Git\bin\bash.exe` ② `%ProgramFiles(x86)%\Git\bin\bash.exe` ③ PATH 上的任意 bash ④ **都没有 → 抛错** |
+| **macOS / Linux** | ① `/bin/bash`（存在就用，**不看版本**） ② PATH 上的 bash ③ 退化 `/bin/sh` |
+
+由此推出三个实用结论：
+
+- **Windows 上 Git Bash 是硬依赖**，而且 DevSpace 优先找的是 `%ProgramFiles%\Git\bin\bash.exe`。
+  装在别处（PortableGit、MSYS2、自定义盘符）时要确保 bash 在 PATH 上，否则 DevSpace 找不到。
+- **macOS / Linux 上装再新的 bash 也不会被选中** —— 只要 `/bin/bash` 存在，DevSpace 就用它。
+  所以在 macOS 上它用的是系统自带的 **bash 3.2**（GPLv2 版）。这对 DevSpace 够用，但别指望
+  bash 4/5 的语法（`mapfile`、`globstar`、关联数组）在你让 ChatGPT 执行的命令里可用。
+- **Linux 上没有 bash 不算致命**（会退化成 `/bin/sh`），但 Alpine 这类精简发行版默认只有 `ash`，
+  bash 专有语法会失败。要补：`sudo apk add bash`。
+
+> `env-check.mjs` 已按上述逻辑分平台判定：Linux 无 bash 但 `/bin/sh` 在 → 报**警告**而不是缺失；
+> Windows 无 bash → 报**缺失**（因为真的跑不了）。
+
+---
+
+## 三、依赖与安装命令
+
+| 依赖 | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Node | `winget install -e --id OpenJS.NodeJS.LTS` | `brew install node@22 && brew link --overwrite --force node@22` | `curl -fsSL https://deb.nodesource.com/setup_22.x \| sudo -E bash - && sudo apt-get install -y nodejs`<br>`sudo dnf install -y nodejs`<br>`sudo pacman -S --noconfirm nodejs npm` |
+| Git | `winget install -e --id Git.Git` | `brew install git` | `sudo apt-get install -y git` / `sudo dnf install -y git` / `sudo pacman -S git` |
+| Bash | 装 Git for Windows 即带上 | `brew install bash`（可选，系统已有 3.2） | 一般自带；Alpine `sudo apk add bash` |
+| Tailscale | `winget install -e --id Tailscale.Tailscale` | `brew install --cask tailscale` | `curl -fsSL https://tailscale.com/install.sh \| sh` |
+| DevSpace | `npm install -g @waishnav/devspace` | 同左 | 同左 |
+| better-sqlite3 | `npm rebuild better-sqlite3` | 同左 | 同左 |
+
+> macOS / Linux 的安装一行命令都用 `curl`，确认它在（macOS 与主流发行版都自带）。
+> macOS 上 `brew install --cask tailscale` 会**要求输入管理员密码**，属于正常现象，不是卡死。
+
+---
+
+## 四、路径写法对照
+
+| 用途 | Windows | macOS / Linux |
+| --- | --- | --- |
+| 家目录 | `C:\Users\<你>` | `/Users/<你>`（macOS）· `/home/<你>`（Linux） |
+| DevSpace 配置 | `C:\Users\<你>\.devspace\config.json` | `~/.devspace/config.json` |
+| 状态库 | `C:\Users\<你>\.local\share\devspace\devspace.sqlite` | `~/.local/share/devspace/devspace.sqlite` |
+| npm 全局包目录 | `npm root -g` → 如 `C:\Users\<你>\AppData\Roaming\npm\node_modules` | `npm root -g` → 如 `/usr/local/lib/node_modules` |
+| npm 全局**命令**目录 | 与 `npm prefix -g` 同目录（直接放 `devspace.cmd`） | `$(npm prefix -g)/bin` ← **容易漏加进 PATH** |
+
+**给 ChatGPT 的路径必须是本机原生写法**：Windows 用 `D:\projects\my-app`，
+macOS / Linux 用 `/home/you/projects/my-app`。从 Windows 文档抄反斜杠路径到 Linux 上，
+会被当成「文件名里带反斜杠」，目录当然找不到 —— `devspace-bootstrap.mjs` 在非 Windows 平台检测到反斜杠会告警。
+
+### ⚠️ 最容易写错的一点：`DEVSPACE_ALLOWED_ROOTS` 用**逗号**分隔
+
+```bash
+# ✅ 三个平台都是逗号
+DEVSPACE_ALLOWED_ROOTS="/home/you/a,/home/you/b" devspace serve
+# ❌ 不是 Windows 的 ; 也不是 PATH 的 :（源码里统一 split(",")）
+```
+
+同理 `DEVSPACE_ALLOWED_HOSTS`、`DEVSPACE_SUBAGENTS`、`DEVSPACE_SKILL_PATHS` 也都是逗号分隔。
+
+### 大小写敏感性
+
+| 平台 | 文件系统默认 | 影响 |
+| --- | --- | --- |
+| Windows | 不敏感 | `D:\X` 与 `d:\x` 是同一目录 |
+| macOS | 不敏感（APFS/HFS+ 默认） | 同上 |
+| Linux | **敏感** | `~/Projects` 与 `~/projects` 是**两个不同目录** |
+
+`devspace-bootstrap.mjs` 的 `allowedRoots` 去重按平台处理（`CASE_INSENSITIVE_FS`）。
+早先无条件 `toLowerCase()` 的版本在 Linux 上会把两个目录合并成一个、**静默丢掉一个白名单项**，已修。
+
+---
+
+## 五、Tailscale：三平台的服务模型不同
+
+| 平台 | 客户端形态 | CLI 位置 | 登录注意 |
+| --- | --- | --- | --- |
+| Windows | 常驻托盘程序 | `C:\Program Files\Tailscale\tailscale.exe`（**不在 PATH**） | 托盘启动后 `tailscale up` 会自动弹浏览器 |
+| macOS | 菜单栏 App | `/usr/local/bin/tailscale`、`/opt/homebrew/bin/tailscale`，**App Store 版在 `/Applications/Tailscale.app/Contents/MacOS/Tailscale`（不在 PATH）** | 先启动 App 再 `tailscale up` |
+| Linux | systemd 守护进程 `tailscaled` | `/usr/bin/tailscale`、`/usr/sbin`、`/snap/bin` | **CLI 默认要 root** |
+
+Linux 上推荐一次性把权限交给自己，之后就不用每条命令都 `sudo`：
+
+```bash
+sudo systemctl enable --now tailscaled     # 确保守护进程在跑
+sudo tailscale up --operator=$USER         # --operator：把 CLI 权限交给当前用户
+```
+
+`tailscale funnel --bg <port>` 的**语法三平台一致**（`--set-path=/mcp` 的禁令也一致，见铁律 1）。
+关闭用 `tailscale funnel reset`。
+
+---
+
+## 六、三平台各自最容易踩的坑
+
+### Windows
+
+| 坑 | 表现 | 处理 |
+| --- | --- | --- |
+| bash 是硬依赖 | `No bash shell found` | 装 Git for Windows；确保 `%ProgramFiles%\Git\bin\bash.exe` 或 PATH 上的 bash 存在 |
+| `npm` 不能直接 spawn `.cmd` | `'C:\Program' 不是内部或外部命令` | 手动加引号再走 shell（两个脚本已处理） |
+| 装完 PATH 不刷新 | 刚装完仍报命令找不到 | **新开一个终端**，重跑 `env-check` |
+| POSIX 版 CLI shim 依赖 `sed`/`dirname` | `Cannot find module '...dist\cli.js'` | 用绝对路径直连 `dist/cli.js`（**Windows 特有**，macOS/Linux 上 npm 只建软链，没这问题） |
+
+### macOS
+
+| 坑 | 表现 | 处理 |
+| --- | --- | --- |
+| Homebrew 不在 PATH | 非交互 shell 里找不到 `brew`/`node` | `eval "$(/opt/homebrew/bin/brew shellenv)"` 写进 `~/.zprofile`（Apple Silicon 路径是 `/opt/homebrew`，Intel 是 `/usr/local`） |
+| App Store 版 Tailscale 没有 CLI | `tailscale: command not found` | 用 `/Applications/Tailscale.app/Contents/MacOS/Tailscale`，或 `brew install tailscale` |
+| 系统 bash 是 3.2 | bash 5 语法不可用 | 对 DevSpace 够用；要 bash 5 就 `brew install bash`（但 DevSpace 仍会用 `/bin/bash`） |
+| `brew install --cask` 要密码 | 安装过程停在密码提示 | 正常，不是卡死；非交互环境会直接失败，改由用户手动执行 |
+
+### Linux
+
+| 坑 | 表现 | 处理 |
+| --- | --- | --- |
+| `tailscale` 要 root | `access denied` / `permission denied` | `sudo tailscale up --operator=$USER`，之后免 sudo |
+| 守护进程没起 | `BackendState` 读不到 | `sudo systemctl enable --now tailscaled` |
+| `XDG_DATA_HOME` 无效 | 改了环境变量但状态库还在 `~/.local/share` | 用 `DEVSPACE_STATE_DIR` 显式指定 |
+| 精简发行版没有 bash | shell 退化成 `sh`，脚本语法报错 | Alpine：`sudo apk add bash`；装完 `env-check` 会从「警告」变「就绪」 |
+| snap 版 Tailscale | 路径在 `/snap/bin/tailscale` | 两个脚本的候选表已包含 |
+| 大小写敏感 | 白名单目录「明明写了却不在里面」 | 确认大小写与磁盘一致 |
+
+---
+
+## 七、脚本的平台适配说明
+
+两个脚本（`env-check.mjs` / `devspace-bootstrap.mjs`）都能三平台直接跑，无需改代码。
+
+| 脚本行为 | 处理方式 |
+| --- | --- |
+| 包管理器探测 | Windows `winget` ｜ macOS `brew` + `port` ｜ Linux `apt-get`/`dnf`/`yum`/`pacman`/`zypper`/`apk` |
+| 安装命令选择 | 按平台返回对应命令；含 `sudo`/管道的交给用户手动执行，不代跑 |
+| 找不到包管理器 | **跳过并说明**，不会抛 `ENOENT`（早年 Windows-only 的判断已泛化到三平台） |
+| bash 判定 | Windows 缺失 = 直接判失败；macOS/Linux 无 bash 但有 `/bin/sh` → 只警告 |
+| Tailscale 提示 | 按平台给出「托盘 / 菜单栏 App / systemd + --operator」的不同说法 |
+| `allowedRoots` 去重 | 按平台决定是否大小写不敏感（见上） |
+| 主目录 / 盘符根告警 | 三平台一致（`/`、`C:\`、`~` 都会告警） |
+
+**平台翻转测试**：本机是 Windows，无法直接跑 POSIX 分支，所以用「复制脚本 + 改 `IS_WIN`/`IS_MAC` 常量」
+的方式验证了去重、反斜杠告警、主目录告警等逻辑（5/5 通过）。
+
+---
+
+## 八、让 `devspace serve` 常驻（三平台）
+
+进程一停 ChatGPT 就断。开机自启按平台选：
+
+| 平台 | 方案 |
+| --- | --- |
+| Windows | 任务计划程序（登录时启动），或 `nssm install DevSpace` |
+| macOS | `launchd`：写 `~/Library/LaunchAgents/*.plist`，`RunAtLoad` + `KeepAlive` |
+| Linux | systemd：user unit（`systemctl --user enable --now`）或 system unit |
+
+启动命令都指向**绝对路径的 `dist/cli.js`**，避免 PATH/shim 差异：
+
+```bash
+node <npm root -g>/@waishnav/devspace/dist/cli.js serve
+```
+
+---
+
+## 九、不支持的组合
+
+| 组合 | 状态 | 原因 |
+| --- | --- | --- |
+| 原生 PowerShell / cmd 里跑 `devspace serve` | ✅ 可以（服务本身能起） | 但 **shell 工具仍要 bash** —— 让 ChatGPT 执行命令时走的是 Git Bash |
+| 没有 bash 的 Windows | ❌ 不可用 | DevSpace 直接抛错，无兜底 |
+| 没有 bash 的 Linux | ⚠️ 降级可用 | 退化成 `/bin/sh`，bash 专有语法失败 |
+| Windows / macOS 上用 `download_artifact` | ❌ 未注册 | 源码限定 `linux` |
+| WSL 作为唯一 bash | ⚠️ 可行但绕 | `env-check` 会识别 WSL 入口；建议改用 Git Bash |
+| 用 `XDG_DATA_HOME` 改状态目录 | ❌ 无效 | 需改用 `DEVSPACE_STATE_DIR` |

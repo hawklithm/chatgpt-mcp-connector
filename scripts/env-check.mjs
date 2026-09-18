@@ -10,6 +10,13 @@
  *
  * 检查项：Node / npm / Git / Bash / Tailscale / DevSpace / better-sqlite3 / 包管理器
  *
+ * 跨平台：Windows / macOS / Linux 都能跑。三平台的差异集中在三处，脚本里都按平台分支处理了 ——
+ *   1. 依赖安装方式：winget ｜ brew / port ｜ apt-get / dnf / yum / pacman / zypper / apk
+ *   2. shell 解析：Windows 上 DevSpace 强制要 Git Bash（没有兜底）；macOS/Linux 优先 /bin/bash，
+ *      找不到会退化成 /bin/sh（所以那时只报警告，不报缺失）
+ *   3. Tailscale 的服务模型：Windows 托盘程序 ｜ macOS 菜单栏 App ｜ Linux systemd 守护进程 + --operator
+ * 细节见 references/cross-platform.md。
+ *
  * ⚠️ 安全约定：默认【不安装任何东西】。只有显式传 --install 才会执行安装命令。
  *    在 agent 场景里，调用方应先跑一次自检、把结果给用户看、征得同意后再加 --install。
  *
@@ -209,17 +216,36 @@ function checkBash() {
         // WSL 入口
         'C:\\Windows\\System32\\bash.exe',
       ].filter(Boolean)
-    : ['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash', '/opt/homebrew/bin/bash'];
+    : [
+        // macOS / Linux：/bin/bash 是绝大多数发行版与 macOS 的标配
+        '/bin/bash',
+        '/usr/bin/bash',
+        // Homebrew（Apple Silicon 在 /opt/homebrew，Intel 在 /usr/local）
+        '/opt/homebrew/bin/bash',
+        '/usr/local/bin/bash',
+        // 少数从源码装到 /opt 的场景
+        '/opt/local/bin/bash',
+      ];
 
-  // 分档：数值越小越推荐。Git Bash 是 Windows 上最省事的原生方案。
+  // 分档：数值越小越推荐。这**只影响本脚本的展示顺序**，不决定 DevSpace 实际用哪个 bash ——
+  // Windows 上 DevSpace 固定先找 %ProgramFiles%\Git\bin\bash.exe，找不到才扫 PATH；
+  // macOS / Linux 上固定优先 /bin/bash，存在就用它，根本不会理我们排的名（见 references/cross-platform.md）。
+  // 所以这里把 /bin/bash 排第一，是为了让「展示的那个」和「实际会用的那个」对得上。
   const classify = (p) => {
     const l = p.toLowerCase().replace(/\//g, '\\');
+    // —— Windows ——
     if (l.includes('\\git\\bin\\bash')) return { flavor: 'Git Bash', rank: 1 };
     if (l.includes('msys64')) return { flavor: 'MSYS2', rank: 2 };
     if (l.includes('cygwin')) return { flavor: 'Cygwin', rank: 3 };
     if (l.includes('system32\\bash') || l.includes('\\wsl')) return { flavor: 'WSL（Windows Subsystem for Linux）', rank: 4, noExec: true };
     if (l.includes('portablegit')) return { flavor: 'PortableGit（某工具自带的副本）', rank: 9 };
-    return { flavor: 'Bash', rank: 5 };
+    // —— macOS / Linux ——
+    if (p === '/bin/bash') return { flavor: IS_MAC ? 'macOS 系统 Bash（3.2，对 DevSpace 足够）' : '系统 Bash（/bin/bash）', rank: 1 };
+    if (p === '/usr/bin/bash') return { flavor: '系统 Bash（/usr/bin/bash）', rank: 2 };
+    if (p.startsWith('/opt/homebrew/')) return { flavor: 'Homebrew Bash（Apple Silicon）', rank: 3 };
+    if (p.startsWith('/usr/local/')) return { flavor: IS_MAC ? 'Homebrew Bash（Intel）/ 系统 path' : '/usr/local 下的 Bash', rank: 4 };
+    if (p.startsWith('/opt/local/')) return { flavor: 'MacPorts Bash', rank: 5 };
+    return { flavor: 'Bash', rank: 6 };
   };
 
   // 收集全部候选：PATH 里的 + 固定路径里的（不提前 break，便于把选择权交给用户判断）
@@ -229,10 +255,23 @@ function checkBash() {
   for (const c of candidates) if (existsSync(c) && !all.some((x) => x.toLowerCase() === c.toLowerCase())) all.push(c);
 
   if (all.length === 0) {
+    // macOS / Linux 上 DevSpace 找不到 bash 会**退化成 /bin/sh**（源码 utils/shell.js 的兜底分支），
+    // 所以这里不该报「缺失」把整条流程拦下来 —— 降级成警告，并说清代价。
+    // Windows 上没有任何兜底：找不到 bash 就直接抛 "No bash shell found"，shell 工具彻底不可用。
+    if (!IS_WIN && existsSync('/bin/sh')) {
+      item.status = 'warn';
+      item.path = '/bin/sh';
+      item.flavor = 'sh（退化兜底）';
+      item.found = '（/bin/sh 存在）';
+      item.note =
+        '没有 bash，DevSpace 会退化成 /bin/sh 执行命令。多数命令仍可用，但 bash 专有语法（数组、`[[ ]]`、进程替换）会失败。' +
+        '想补上：Debian/Ubuntu `sudo apt install bash`；Alpine `sudo apk add bash`；macOS `brew install bash`';
+      return item;
+    }
     item.status = 'fail';
     item.note = IS_WIN
       ? '未找到任何 Bash。DevSpace 无法执行 shell 命令 —— 装 Git for Windows 即可同时获得 Git + Git Bash'
-      : '未找到 bash（极少见，检查 /bin/bash）';
+      : '未找到 bash，也没有 /bin/sh 兜底（极精简容器里常见）。装 bash：Debian/Ubuntu `sudo apt install bash`；Alpine `sudo apk add bash`';
     return item;
   }
 
@@ -268,14 +307,50 @@ function checkBash() {
     item.note = best.flavor;
   }
   if (detailed.length > 1) item.note += `；共发现 ${detailed.length} 个 Bash（见下方列表）`;
+  // macOS / Linux 上 DevSpace 只认 /bin/bash（存在即用），装了更新的 Homebrew bash 也不会被选。
+  // 不提示的话，用户会以为「我装了 bash 5 却没生效」是 bug。
+  if (!IS_WIN && best.path !== '/bin/bash' && existsSync('/bin/bash')) {
+    item.note += '；⚠️ 注意 DevSpace 实际会优先用 /bin/bash，而不是上面这个';
+  }
   return item;
+}
+
+/**
+ * Tailscale 未运行 / 未登录时的处置建议。
+ *
+ * 三个平台的**服务模型都不一样**，不能一句话打发：
+ *   Windows —— 客户端是常驻托盘程序，登录靠它自己弹浏览器；
+ *   macOS   —— 是 GUI App（菜单栏图标），CLI 还可能藏在 app bundle 里不在 PATH；
+ *   Linux   —— 是 systemd 守护进程（tailscaled），且 CLI 默认需要 root，
+ *              官方推荐用 `--operator` 把权限交给当前用户，否则后面每条命令都得 sudo。
+ */
+function tailscaleUpHint() {
+  if (IS_WIN) {
+    return '启动 Tailscale（Windows 托盘图标）后执行 `tailscale up`，在浏览器里完成授权';
+  }
+  if (IS_MAC) {
+    return '启动 Tailscale App（菜单栏图标）后执行 `tailscale up`；若提示命令不存在，' +
+      'CLI 在 /Applications/Tailscale.app/Contents/MacOS/Tailscale（App Store 版不在 PATH 里）';
+  }
+  return '先确认守护进程在跑（`sudo systemctl enable --now tailscaled`），' +
+    '再执行 `sudo tailscale up --operator=$USER` —— 加上 --operator 之后就不用每次 sudo 了';
 }
 
 /** Tailscale —— 提供公网 HTTPS 隧道（ChatGPT 够不到 127.0.0.1） */
 function checkTailscale() {
   const candidates = IS_WIN
     ? [join(process.env.ProgramFiles || 'C:\\Program Files', 'Tailscale', 'tailscale.exe'), 'C:\\Program Files (x86)\\Tailscale\\tailscale.exe']
-    : ['/usr/bin/tailscale', '/usr/local/bin/tailscale', '/opt/homebrew/bin/tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'];
+    : [
+        // macOS：Homebrew / 官方 pkg 会装到这两处；独立 App / App Store 版的 CLI 在 bundle 内，不在 PATH
+        '/usr/local/bin/tailscale',
+        '/opt/homebrew/bin/tailscale',
+        '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+        // Linux：官方脚本装到 /usr/bin，发行版包可能在 /usr/sbin，snap 装到 /snap/bin
+        '/usr/bin/tailscale',
+        '/usr/local/bin/tailscale',
+        '/usr/sbin/tailscale',
+        '/snap/bin/tailscale',
+      ];
   const bin = which('tailscale') || which('tailscale.exe') || firstExisting(candidates);
   const item = { id: 'tailscale', name: 'Tailscale', required: '>=1.38.3（1.52 起 CLI 语法变更，建议用新版）', found: null, path: bin };
   if (!bin) {
@@ -313,11 +388,11 @@ function checkTailscale() {
     if (!backend) {
       status = 'warn';
       note = '读不到运行状态 —— Tailscale 客户端/服务可能没启动';
-      item.needsUserAction = '启动 Tailscale（Windows 托盘图标）后执行 `tailscale up`，在浏览器里完成授权';
+      item.needsUserAction = tailscaleUpHint();
     } else if (backend !== 'Running') {
       status = 'warn';
       note = `已安装但未登录（BackendState=${backend}）`;
-      item.needsUserAction = '执行 `tailscale up` —— 它会打印一个链接，需要你用浏览器打开并完成登录授权';
+      item.needsUserAction = `${tailscaleUpHint()} —— \`tailscale up\` 会打印一个链接，必须由你用浏览器打开并完成登录授权`;
     } else if (!note) {
       note = '已登录且运行中';
     }
@@ -363,11 +438,19 @@ function checkDevspace() {
   }
   item.status = 'ok';
   item.note = '已安装';
-  // shim 可用性：POSIX shell 脚本版 shim 依赖 sed/dirname/uname，PATH 残缺时会算错路径
+  // shim 可用性。
+  // Windows：npm 把 shim 直接放在 prefix 根（devspace.cmd），且 POSIX 版 shim 依赖 sed/dirname/uname，
+  //          在 PATH 残缺的 shell 里会算错路径 —— 这是 Windows 特有的毛病。
+  // macOS/Linux：npm 在 <prefix>/bin 建软链，只要该目录在 PATH 里就没问题（这正是不在 PATH 时最容易被误判成
+  //          「装了没用」的情形，所以要把目录算出来告诉用户）。
   if (IS_WIN) {
     if (!existsSync(join(root, '..', 'devspace.cmd')) && !which('devspace.cmd')) {
       item.note = '已安装，但未找到 devspace.cmd shim —— 调用时请直接用 `node <path>/dist/cli.js`';
     }
+  } else if (!which('devspace')) {
+    // npm 全局 bin = <prefix>/bin，而 <prefix> = 全局 node_modules 的上两级
+    const binDir = join(root, '..', '..', 'bin');
+    item.note = `已安装，但 PATH 里没有 devspace —— 全局 bin 目录是 ${binDir}，把它加进 PATH，或直接用 \`node ${item.path}\``;
   }
   return item;
 }
@@ -398,6 +481,10 @@ function checkPkgManagers() {
   } else if (IS_MAC) {
     const r = tryExec('brew', ['--version']);
     out.brew = r.ok ? r.out.split('\n')[0] : null;
+    // MacPorts 是 macOS 上的另一条路。没有 Homebrew 但有 MacPorts 时至少要认出来，
+    // 否则会误导用户以为「这台机器没有任何可用的包管理器」。
+    const mp = tryExec('port', ['version']);
+    if (mp.ok) out.port = mp.out.split('\n')[0];
   } else {
     for (const m of ['apt-get', 'dnf', 'yum', 'pacman', 'zypper', 'apk']) {
       const r = tryExec(m, ['--version']);
@@ -409,7 +496,7 @@ function checkPkgManagers() {
 
 // ─────────────────────────── 安装命令映射 ───────────────────────────
 
-function installCommands(id, managers) {
+function installCommands(id) {
   const cmds = [];
 
   const pick = (win, mac, linux) => {
@@ -441,7 +528,11 @@ function installCommands(id, managers) {
       ...pick(
         'winget install -e --id Git.Git --accept-package-agreements --accept-source-agreements   # Git for Windows 自带 Git Bash（推荐）\nwinget install -e --id Microsoft.WSL   # 或者装 WSL',
         'brew install bash',
-        '# 一般已自带 bash；确认 /bin/bash 存在'
+        // Linux 不给命令：Debian/Ubuntu/Fedora/Arch 都自带 bash，真正缺的是 Alpine 这类精简发行版，
+        // 装法按发行版写在 checkBash() 的说明里了。
+        // ⚠️ 这里曾经放了一行 `# 一般已自带 bash…` 的注释，结果 --install 把它当命令执行并抛 ENOENT ——
+        //    「没有安装方案」必须用空数组表达，不能用注释行占位。
+        null
       )
     );
   }
@@ -463,15 +554,13 @@ function installCommands(id, managers) {
   return cmds;
 }
 
-/** 执行安装命令时，把命令名解析成真实可执行文件（Windows 上 `npm` 单独一个词跑不起来） */
+/**
+ * 执行安装命令时，把命令名解析成真实可执行文件（Windows 上 `npm` 单独一个词跑不起来）。
+ * 返回原样说明没解析到 —— 调用方据此判断「这个包管理器本机没有」并跳过，而不是抛 ENOENT。
+ */
 function resolveExe(tok) {
   if (tok === 'npm' || tok === 'npm.cmd') return npmBin() || tok;
   return which(IS_WIN ? `${tok}.exe` : tok) || which(tok) || tok;
-}
-
-/** 某些项可以直接由本脚本执行（无需系统包管理器） */
-function selfInstallable(id) {
-  return id === 'devspace' || id === 'sqlite';
 }
 
 // ─────────────────────────── 主流程 ───────────────────────────
@@ -529,7 +618,7 @@ if (WANT_JSON) {
     console.log(`\n❌ 有 ${bad.length} 项缺失：${bad.map((b) => b.id).join(', ')}`);
     console.log('\n--- 安装命令 ---');
     for (const b of bad) {
-      const cmds = installCommands(b.id, managers);
+      const cmds = installCommands(b.id);
       console.log(`\n# ${b.name}`);
       if (cmds.length === 0) console.log('  （当前平台没有自动安装方案，请手动安装）');
       else cmds.forEach((c) => console.log('  ' + c));
@@ -550,12 +639,11 @@ if (WANT_JSON) {
     // 否则「Node 装失败」会连带把 Tailscale 也跳过，用户还得再跑一遍。
     const report = [];
     for (const t of targets) {
-      const cmds = installCommands(t.id, managers);
+      const cmds = installCommands(t.id);
       if (cmds.length === 0) { console.log(`\n[跳过] ${t.name}：无自动安装方案`); report.push({ id: t.id, how: '跳过', ok: null }); continue; }
-      if (!selfInstallable(t.id) && IS_WIN && !managers.winget) {
-        console.log(`\n[跳过] ${t.name}：没有 winget，无法自动安装`); report.push({ id: t.id, how: '跳过', ok: null }); continue;
-      }
       for (const c of cmds) {
+        // 纯注释行不是命令。曾经在 Linux 上给 bash 返回过一行注释，--install 会拿它当命令跑并抛 ENOENT。
+        if (/^\s*#/.test(c)) continue;
         // 含换行（多发行）、或含管道/重定向/sudo 的命令交给用户手动跑，避免 shell 语义不可控
         const isSingle = !c.includes('\n');
         const complex = /[|>&]/.test(c) || /\bsudo\b/.test(c);
@@ -566,6 +654,14 @@ if (WANT_JSON) {
         }
         const parts = c.split(/\s+/);
         const exe = resolveExe(parts[0]);
+        // 解析不到可执行文件就别硬跑 —— 明确说「本机没有这个包管理器」，比抛 ENOENT 好读得多。
+        // 覆盖三平台：Windows 没 winget、macOS 没 Homebrew/MacPorts、Linux 发行版对不上。
+        const resolvable = exe !== parts[0] || existsSync(exe) || !!which(exe);
+        if (!resolvable) {
+          console.log(`\n[跳过] ${t.name}：本机未找到 \`${parts[0]}\`，无法自动安装（请按上面的「安装命令」手动执行）`);
+          report.push({ id: t.id, how: '跳过', ok: null });
+          continue;
+        }
         // 走网络的安装命令：给长超时 + 重试 1 次（registry 抖动很常见，重试成功率不错）
         const networked = /^(npm|winget|brew|pacman|dnf|yum|apt-get|zypper|apk)$/.test(parts[0]);
         console.log(`\n[执行] ${c}`);
