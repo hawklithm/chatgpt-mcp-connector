@@ -91,6 +91,8 @@ tailscale funnel reset                              # 关掉公网入口
 | Node 版本超出 `<27` 区间 | 装成了 current（26.x 已逼近上限）或版本过老 | Windows：`winget install -e --id OpenJS.NodeJS.LTS`；macOS：`brew install node@22 && brew link --overwrite --force node@22`；Linux：用 nvm / fnm 装 22 LTS。装完 `node -v` 确认 |
 | `'C:\Program' 不是内部或外部命令` | Windows 上 shell 模式 spawn 没给含空格路径加引号 | 见 `references/env-setup.md`「装完之后的环境坑」第 2 条 |
 | 找不到 Bash / 只找到 PortableGit（**Windows**） | 没装 Git for Windows | `winget install -e --id Git.Git`；`env-check` 会列出全部候选并标推荐项。⚠️ Windows 上 bash 是硬依赖，没有兜底 |
+| **`bash` 工具持续异常**：`git status` / `cargo fmt` / `cargo test` / `echo` / `ls` **全部**失败，ChatGPT 里显示 `RuntimeException` 或一段乱码（如 `?????`） | **Windows 上 DevSpace 把 `C:\Windows\System32\bash.exe` 当成了 shell。** 那不是 shell，是 WSL 启动器：忽略 `-c`、不执行命令，只把 WSL 的错误吐回来。触发条件是 Git for Windows **没装在 `%ProgramFiles%\Git`**（例如装在 D 盘）—— DevSpace 只在 Program Files 下找，落空后掉进 `where bash.exe`，而 `System32` 在**系统** PATH 里、必然比用户 PATH 更早命中 | 见下节「Windows：bash 被 WSL 启动器顶掉」。**注意：`echo` 也失败是关键判据** —— `echo` 是 bash 内建命令，它失败说明 shell 根本没起来，而不是 PATH 找不到工具 |
+| `bash` 能起来，但 `ls` / `grep` / `dirname` 报 `command not found` | 用的不是完整 Git Bash，而是某工具自带的 **PortableGit 精简副本**（缺 coreutils，或没把 `usr\bin` 放进 PATH） | 与上一条**是两种病**：这条是「shell 活了但缺工具」，那条是「shell 根本没活」。`echo` 能过、`ls` 不过 = 本条。建议另装官方 Git for Windows |
 | Linux 上只有 `sh` 没有 `bash` | Alpine 等精简发行版默认不带 bash | `sudo apk add bash`（Debian/Ubuntu 是 `sudo apt install bash`）。不装也能跑，但 bash 专有语法会失败 |
 | ChatGPT 里看不到 `download_artifact` 工具 | 这个工具**只在 Linux 上注册**（源码 `ARTIFACT_DOWNLOAD_PLATFORMS = {linux}`） | 正常现象，不是配置问题。Windows / macOS 上用普通读写工具即可 |
 | 装完依赖但命令仍找不到 | 当前终端 PATH 是旧的 | **新开一个终端**（或重启工具），再重跑 `env-check` |
@@ -98,6 +100,96 @@ tailscale funnel reset                              # 关掉公网入口
 | `config.json` / `auth.json` 损坏或被截断 | 手改时写错（尾逗号、漏右括号），或写入过程被中断 | 脚本会**拒绝写盘**并另存 `.corrupt-*`。人工修好后重跑，或 `apply --force` 重建 |
 | `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` 刷 stderr | Express `trust proxy` 未开，express-rate-limit 校验告警 | **非致命**，只出现在 OAuth 端点流量上（实测日常 `tool_call` 不触发）。想消掉设 `DEVSPACE_TRUST_PROXY=true`（但会让限流键改用 XFF，隧道下可被伪造，自行权衡） |
 | 插件建好了，但新对话里看不到工具 | 需要手动在对话工具菜单里挂上 | 打开连接详情 → **Refresh** → 再新开一个对话 |
+
+## Windows：bash 被 WSL 启动器顶掉（shell 工具全废）
+
+### 现象
+
+ChatGPT 那边 `bash` 工具**持续**异常，报 `RuntimeException` 或一段乱码（本地复现时是 `?????`）。
+且**每一条**命令都一样失败 —— `git status`、`cargo fmt`、`cargo test`、`cargo check`、`echo`、`ls` 无一例外。
+
+> **`echo` 失败是最重要的判据。** `echo` 是 bash 的**内建命令**，不需要 coreutils、不需要 PATH。
+> 它都能失败，就说明 **shell 进程根本没起来**，而不是「PATH 里找不到某个工具」。
+> 反过来，如果 `echo` 能过、`ls` 报 `command not found`，那是 PortableGit 缺 coreutils，见速查表另一行。
+
+### 根因
+
+DevSpace 在 Windows 上按**死写的顺序**找 shell（源码 `pi-coding-agent/dist/utils/shell.js` → `getShellConfig()`）：
+
+1. `%ProgramFiles%\Git\bin\bash.exe`
+2. `%ProgramFiles(x86)%\Git\bin\bash.exe`
+3. `where bash.exe` 的**第一个**命中
+4. 都没有 → 抛 `No bash shell found`
+
+它**不会**去扫 D:/E:/F: 盘。所以只要 Git for Windows 装在非默认盘（D 盘很常见），
+第 ①② 步就落空，掉到第 ③ 步 —— 而 `C:\Windows\System32\bash.exe`（**WSL 启动器**）
+几乎必定排在第一个，因为 `System32` 在**系统** PATH 里。
+
+更进一步：源码会识别这个路径（`isLegacyWslBashPath()`），把调用方式切成「`-s` + 命令走 stdin」。
+但那个 exe **根本不是 shell**，它只是转发给 `wsl.exe`；`-s` 也救不了它。
+（即使 WSL 装了发行版也不行：那会在 **Linux 文件系统**里执行，`D:\...` 这类路径和你的 Windows 工具链都不存在。）
+
+### 先确认
+
+```bash
+node $SK/env-check.mjs
+```
+
+看 `Bash` 那一项：如果显示 `[不可用]` 且路径是 `C:\WINDOWS\system32\bash.EXE`，就是这个问题。
+同时它会列出「发现的 Bash」—— 你通常能在里面看到那个真正可用的 Git Bash，只是**不在 DevSpace 会找的位置**。
+
+### 三条修法（按侵入性从低到高，任选其一）
+
+> 具体路径不用自己拼 —— `node $SK/env-check.mjs` 会按**你机器上的实际安装位置**
+> 把下面三条命令生成好（它从 PATH 上的 `git.exe` 反推同一份安装里的 Git Bash，
+> 所以 Git 装在哪个盘都对）。下面用「Git 装在 `C:\Program Files\Git`」举例：
+
+```bash
+# ① 临时：启动 serve 时把 Git 的 bin 前置到 PATH（无需管理员）
+#    cmd:
+set "PATH=C:\Program Files\Git\bin;%PATH%" && devspace serve
+#    bash:
+PATH="<GIT 的 POSIX 形式>/bin:$PATH" devspace serve
+
+# ② 一劳永逸：建目录 junction，让 DevSpace 的第 ① 步就能命中（需管理员终端）
+mklink /J "C:\Program Files\Git" "C:\Program Files\Git"
+#    撤销：rmdir "C:\Program Files\Git"   （只删链接，不动 D 盘的真身）
+
+# ③ 把 Git 的 bin 前置到【系统】PATH
+#    必须是「系统变量」而不是「用户变量」—— 见下方「为什么这样排」
+```
+
+### 为什么这样排（几个容易走弯路的点）
+
+- **把 Git 加进「用户变量」的 PATH 是没用的。** 进程的 PATH = **系统** PATH + 用户 PATH，
+  系统在前。`C:\Windows\System32` 是系统变量，所以用户变量里加多少都会被它抢先。
+  要么改**系统**变量（修法 ③），要么不靠 PATH（修法 ②）。
+- **`DEVSPACE_*` 环境变量里没有能指定 shell 的。** 翻遍 `dist/config.js` 只有
+  `DEVSPACE_LOG_SHELL_COMMANDS`（只用来打日志），没有 shell 路径项。
+- **`settings.json` 里的 `shellPath` 对 `serve` 无效。** `settings-manager` 确实支持 `shellPath`，
+  `agent-session.js` 也会读它，**但** `serve` 的 MCP shell 工具走的是另一条路：
+  `dist/pi-tools.js` 调 `createBashTool(context.cwd)` —— 没传 options，拿不到 `shellPath`。
+  所以别去改 settings.json，改了也没用。
+- **不要 `winget install Git.Git` 重装。** Git 已经装好了，重装到 C 盘只会让你有两份 Git。
+  `env-check` 检测到「本机已有可用 bash、只是找不到」时会明确说 **⛔ 不用重装**。
+
+### 验证
+
+```bash
+# 修完再跑一次自检，Bash 应变成 [ok] 且注明「冒烟测试通过」
+node $SK/env-check.mjs
+```
+
+`env-check` 的 Bash 项现在会**真跑一条命令**（`echo`）确认它活着，不再只看路径存不存在 ——
+所以它不会再对这种情况亮假绿灯。如果图省事只想手验：
+
+```bash
+where bash.exe        # 第一个结果必须不是 C:\Windows\System32\bash.exe
+```
+
+然后重启 `devspace serve`，回 ChatGPT 重试 `echo hi`。
+
+---
 
 ## 已证伪的伪根因：不要为 well-known 404 加反向代理
 

@@ -53,16 +53,46 @@ DevSpace 的 shell 工具解析顺序（源码 `pi-coding-agent/dist/utils/shell
 
 由此推出三个实用结论：
 
-- **Windows 上 Git Bash 是硬依赖**，而且 DevSpace 优先找的是 `%ProgramFiles%\Git\bin\bash.exe`。
-  装在别处（PortableGit、MSYS2、自定义盘符）时要确保 bash 在 PATH 上，否则 DevSpace 找不到。
+- **Windows 上 Git Bash 是硬依赖**，而且 DevSpace 只认 `%ProgramFiles%\Git\bin\bash.exe` 和
+  `%ProgramFiles(x86)%\Git\bin\bash.exe` 这两个位置，都没有才去扫 PATH 的**第一个**命中。
+  它**不会扫 D:/E:/F: 盘** —— 所以「Git 装在 D 盘」这种再正常不过的安装会直接踩雷（见下方 ⚠️）。
 - **macOS / Linux 上装再新的 bash 也不会被选中** —— 只要 `/bin/bash` 存在，DevSpace 就用它。
   所以在 macOS 上它用的是系统自带的 **bash 3.2**（GPLv2 版）。这对 DevSpace 够用，但别指望
   bash 4/5 的语法（`mapfile`、`globstar`、关联数组）在你让 ChatGPT 执行的命令里可用。
 - **Linux 上没有 bash 不算致命**（会退化成 `/bin/sh`），但 Alpine 这类精简发行版默认只有 `ash`，
   bash 专有语法会失败。要补：`sudo apk add bash`。
 
+> ### ⚠️ Windows 最恶的一坑：bash 被 WSL 启动器顶掉
+>
+> Git for Windows 装在非默认盘时，DevSpace 的第 ①② 步落空，顺着第 ③ 步命中
+> `C:\Windows\System32\bash.exe`。那是 **WSL 启动器，不是 shell**：它忽略 `-c`、不执行命令，
+> **所有命令**（连 `echo` 都算）立刻失败并返回乱码，在 ChatGPT 那边表现为「bash 接口持续异常」。
+>
+> 而且**「把 Git 加进 PATH」并不够**：进程的 PATH = **系统** PATH + 用户 PATH，系统在前，
+> `C:\Windows\System32` 是系统变量，永远比用户变量里加的 Git 更早命中。
+> （另外 `settings.json` 的 `shellPath` 对 `serve` 的 shell 工具也无效 —— 它没把该参数传下去；
+> `DEVSPACE_*` 环境变量里也没有 shell 路径项。所以只能从「让真 bash 被找到」入手。）
+>
+> 三条修法，按侵入性从低到高：
+>
+> | # | 做法 | 权限 |
+> | --- | --- | --- |
+> | ① | 启动 serve 时前置 PATH：`set "PATH=C:\Program Files\Git\bin;%PATH%"` | 无需管理员 |
+> | ② | 建 junction：`mklink /J "C:\Program Files\Git" "C:\Program Files\Git"` | 需管理员 |
+> | ③ | 把 Git 的 bin 前置到**系统** PATH（不是用户变量） | 需管理员 |
+>
+> 路径不用自己拼 —— `env-check` 会**按你机器上的实际安装位置**把三条命令生成好
+> （它从 PATH 上的 `git.exe` 反推同一份安装里的 Git Bash，Git 装在哪个盘都对）。
+>
+> 完整说明见 `references/troubleshooting.md` 的「Windows：bash 被 WSL 启动器顶掉」。
+>
+> **判定口诀**：`echo` 也失败 = shell 根本没起来（本坑）；
+> `echo` 能过、`ls` 报 `command not found` = bash 起了但缺 coreutils（PortableGit 精简副本）。
+
 > `env-check.mjs` 已按上述逻辑分平台判定：Linux 无 bash 但 `/bin/sh` 在 → 报**警告**而不是缺失；
 > Windows 无 bash → 报**缺失**（因为真的跑不了）。
+> Windows 上它还会**复刻 DevSpace 的解析顺序**，并对解析出的 bash **真跑一条命令**做冒烟测试 ——
+> 光看路径存在是不够的（`System32\bash.exe` 也在那儿，`existsSync` 同样为真）。
 
 ---
 
@@ -146,6 +176,9 @@ sudo tailscale up --operator=$USER         # --operator：把 CLI 权限交给�
 | 坑 | 表现 | 处理 |
 | --- | --- | --- |
 | bash 是硬依赖 | `No bash shell found` | 装 Git for Windows；确保 `%ProgramFiles%\Git\bin\bash.exe` 或 PATH 上的 bash 存在 |
+| **Git 装在非 C 盘 → bash 被 WSL 启动器顶掉** | **所有**命令失败（含 `echo`），ChatGPT 显示 `RuntimeException` / 乱码 | DevSpace 只找 `%ProgramFiles%\Git`，落空后命中 `System32\bash.exe`（WSL 启动器，不是 shell）。三条修法见第二节 ⚠️ |
+| 把 Git 加进**用户变量** PATH 想修上一条 | 无效，还是命中 System32 | 进程 PATH = **系统** PATH + 用户 PATH，系统在前。要改就改**系统**变量，或改用 junction |
+| PortableGit 精简副本 | bash 能起，但 `ls`/`grep`/`dirname` 报 `command not found` | 与上一条是两种病：那条 `echo` 也失败，这条 `echo` 能过。建议另装官方 Git for Windows |
 | `npm` 不能直接 spawn `.cmd` | `'C:\Program' 不是内部或外部命令` | 手动加引号再走 shell（两个脚本已处理） |
 | 装完 PATH 不刷新 | 刚装完仍报命令找不到 | **新开一个终端**，重跑 `env-check` |
 | POSIX 版 CLI shim 依赖 `sed`/`dirname` | `Cannot find module '...dist\cli.js'` | 用绝对路径直连 `dist/cli.js`（**Windows 特有**，macOS/Linux 上 npm 只建软链，没这问题） |
@@ -181,13 +214,19 @@ sudo tailscale up --operator=$USER         # --operator：把 CLI 权限交给�
 | 包管理器探测 | Windows `winget` ｜ macOS `brew` + `port` ｜ Linux `apt-get`/`dnf`/`yum`/`pacman`/`zypper`/`apk` |
 | 安装命令选择 | 按平台返回对应命令；含 `sudo`/管道的交给用户手动执行，不代跑 |
 | 找不到包管理器 | **跳过并说明**，不会抛 `ENOENT`（早年 Windows-only 的判断已泛化到三平台） |
-| bash 判定 | Windows 缺失 = 直接判失败；macOS/Linux 无 bash 但有 `/bin/sh` → 只警告 |
+| bash 判定 | **复刻 DevSpace 的解析顺序**（`resolveDevspaceBash()`），以解析结果为准 —— 不再只看「推荐排序」；再对非 WSL 的 bash **真跑一条命令**做冒烟测试（`smokeTestBash()`）。Windows 缺失 = 直接判失败；macOS/Linux 无 bash 但有 `/bin/sh` → 只警告 |
+| WSL 入口识别 | 解析到 `System32\bash.exe` / `WindowsApps\bash.exe` → 判 `[不可用]` 并给出三条修法；**不执行**它（会拉起 `wsl.exe`，慢且可能被安全策略拦截） |
+| 「装了但用不了」的措辞 | 此类条目标 `[不可用]`（而非 `[缺失]`），且**不给重装建议** —— 本机已有可用 bash 时，重装只会多出一份 Git |
 | Tailscale 提示 | 按平台给出「托盘 / 菜单栏 App / systemd + --operator」的不同说法 |
 | `allowedRoots` 去重 | 按平台决定是否大小写不敏感（见上） |
 | 主目录 / 盘符根告警 | 三平台一致（`/`、`C:\`、`~` 都会告警） |
 
 **平台翻转测试**：本机是 Windows，无法直接跑 POSIX 分支，所以用「复制脚本 + 改 `IS_WIN`/`IS_MAC` 常量」
-的方式验证了去重、反斜杠告警、主目录告警等逻辑（5/5 通过）。
+的方式验证了去重、反斜杠告警、主目录告警等逻辑（5/5 通过）；
+`env-check` 的 POSIX 分支同样用这个手法验证过（Linux / macOS 两个变体都不崩、且走到正确的判定分支）。
+
+**反向验证**：Windows 上的「bash 被 WSL 顶掉」这条，实测对照过头 ——
+不修 PATH 时 `env-check` 报 `[不可用]`（exit 1），把 Git 的 bin 前置到 PATH 后立刻变 `[ok] Git Bash（冒烟测试通过）`（exit 0）。
 
 ---
 

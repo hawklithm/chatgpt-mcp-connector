@@ -21,7 +21,7 @@ node $SK/env-check.mjs --install    # 确认缺失项后再加这个（先征得
 | **Node** | README 写 `>=22.19 <27`；CLI 内 `assertSupportedNode` 实际放宽到 `>=20.12 <27` | 跑 DevSpace | 启动即报错 |
 | **npm** | 随 Node | 装 DevSpace | 装不上 |
 | **Git** | 任意版本 | worktree 模式；Windows 上 Git 同时提供 Git Bash | 只能用 checkout 模式 |
-| **Bash** | Windows：**必须**有（Git Bash / WSL / MSYS2 / Cygwin），**没有兜底**<br>macOS / Linux：`/bin/bash`（一般自带），缺了就退化 `/bin/sh` | DevSpace 的 shell 工具用它执行命令 | Windows 缺 bash **直接失败**；macOS/Linux 降级可用，但 bash 专有语法会挂 |
+| **Bash** | Windows：**必须**有（Git Bash / WSL / MSYS2 / Cygwin），**没有兜底**；且 DevSpace 只在 `%ProgramFiles%\Git\bin` 找，装到别的盘还要另做一步（见下第 5 条）<br>macOS / Linux：`/bin/bash`（一般自带），缺了就退化 `/bin/sh` | DevSpace 的 shell 工具用它执行命令 | Windows 缺 bash **直接失败**；**更常见也更隐蔽的是「有 bash 但 DevSpace 用不上」，表现为所有命令全失败**（见下第 5 条）；macOS/Linux 降级可用，但 bash 专有语法会挂 |
 | **Tailscale** | `>=1.38.3`（1.52 起 CLI 语法变更，建议新版） | 提供公网 HTTPS 端点（ChatGPT 够不到 `127.0.0.1`） | ChatGPT 无法连接 |
 | **DevSpace** | `@waishnav/devspace` 最新版 | 本体 | — |
 | **better-sqlite3** | 能加载 | DevSpace 的状态存储（OAuth/workspace 持久化） | 启动时原生依赖检查失败 |
@@ -70,11 +70,35 @@ node $SK/env-check.mjs --install    # 确认缺失项后再加这个（先征得
    这类版本管理器靠 shell 初始化脚本注入 PATH，非交互 shell 同样读不到。
    要么在新终端里先 `nvm use 22`，要么直接用绝对路径调用 node。
 
+5. **Windows：Git 装在非 C 盘时，bash 会被 WSL 启动器顶掉（最隐蔽的一个）。**
+   DevSpace 只在 `%ProgramFiles%\Git\bin` 和 `%ProgramFiles(x86)%\Git\bin` 找 bash，
+   都没有才去扫 PATH 的第一个命中 —— 而 `C:\Windows\System32\bash.exe`（WSL 启动器）
+   几乎必定抢先。那个 exe **不是 shell**，忽略 `-c`、不执行命令，
+   于是**所有**命令（包括 `echo`）全部失败，ChatGPT 那边显示 `RuntimeException` 或乱码。
+
+   判据：**`echo` 也失败 = 这个坑**；`echo` 能过而 `ls` 报 `command not found` 则是 bash 缺 coreutils，是另一回事。
+
+   修法三条（临时前置 PATH / 建 junction / 改**系统** PATH），完整说明见
+   `references/troubleshooting.md` 的「Windows：bash 被 WSL 启动器顶掉」。
+   注意往**用户变量** PATH 里加 Git 是没用的 —— 系统 PATH 排在用户 PATH 前面。
+
 ### 快速手工确认
 
 ```bash
-node -v; npm -v; git --version; bash --version
+node -v; npm -v; git --version
+
+# bash 这项要单独看一眼：「能找到」和「DevSpace 会用它」不是一回事
+bash --version
+# Windows 上再确认解析顺序（第一个结果不能是 System32\bash.exe）：
+where bash.exe
+
+# 最省事：让自检替你判定（它会复刻 DevSpace 的解析顺序 + 真跑一条命令）
+node $SK/env-check.mjs
 ```
+
+> ⚠️ 只看 `bash --version` 是有欺骗性的 —— Windows 上它可能通过
+> （`System32\bash.exe` 会响应，只是不干活），但 DevSpace 拿它执行命令时全废。
+> 多花两秒跑 `env-check` 比后面在 ChatGPT 里对着乱码排查划算得多。
 
 ## 阶段 1：安装 DevSpace
 

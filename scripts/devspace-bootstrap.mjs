@@ -44,7 +44,7 @@ import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve as resolvePath } from 'node:path';
+import { delimiter, dirname, join, resolve as resolvePath } from 'node:path';
 
 const CONFIG_DIR = join(homedir(), '.devspace');
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
@@ -240,12 +240,111 @@ function newNodeCheck() {
   return { okNode: true, note: recommended ? `Node ${process.versions.node} 可用，但 README 推荐 22.19+ / 24` : `Node ${process.versions.node}` };
 }
 
+/** 在 PATH 里找可执行文件（本脚本独立可跑，故不复用 env-check 的实现）。 */
+function whichOnPath(name) {
+  const pathEnv = process.env.PATH || '';
+  const exts = IS_WIN ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean) : [''];
+  for (const dir of pathEnv.split(delimiter).filter(Boolean)) {
+    for (const ext of exts) {
+      const p = join(dir, name + ext);
+      try {
+        if (existsSync(p)) return p;
+      } catch {
+        /* 忽略无权限目录 */
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * DevSpace 实际会用的 shell 是否**真的能用**。
+ *
+ * 放在 doctor 里的理由：这是一条「启动 serve 之前必须为真」的前置条件，而且**失败时最难查** ——
+ * serve 起得来、隧道通、ChatGPT 也能连上，但每条 shell 命令都失败，用户只会看到 `RuntimeException`
+ * 或一段乱码，根本联想不到是 shell 选错了。
+ *
+ * 判定顺序完全复刻 DevSpace 源码 `pi-coding-agent/dist/utils/shell.js` 的 getShellConfig()：
+ * Windows ① `%ProgramFiles%\Git\bin\bash.exe` ② `%ProgramFiles(x86)%\Git\bin\bash.exe`
+ * ③ `where bash.exe` 的第一个命中 ④ 抛错。
+ *
+ * 关键是第 ③ 步：Git for Windows 装在非 C 盘时，①② 都落空，而 `C:\Windows\System32\bash.exe`
+ * （**WSL 启动器，不是 shell**）几乎必定抢先 —— 它忽略 `-c`、不执行命令，所有命令全废。
+ * 与 env-check.mjs 里的同名逻辑保持一致（两个脚本各自独立可跑，所以是有意重复的）。
+ */
+function checkDevspaceShell() {
+  const isLegacyWsl = (p) => /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/i.test(String(p).replace(/\//g, '\\'));
+  const isStoreWsl = (p) => /\\appdata\\local\\microsoft\\windowsapps\\/i.test(String(p).replace(/\//g, '\\'));
+
+  if (!IS_WIN) {
+    if (existsSync('/bin/bash')) return { ok: true, path: '/bin/bash', note: '/bin/bash（存在即用）' };
+    const p = whichOnPath('bash');
+    if (p) return { ok: true, path: p, note: p };
+    if (existsSync('/bin/sh')) {
+      return { ok: false, soft: true, path: '/bin/sh', note: '没有 bash，DevSpace 会退化成 /bin/sh（bash 专有语法会失败）' };
+    }
+    return { ok: false, path: null, note: '找不到 bash，也没有 /bin/sh 兜底' };
+  }
+
+  const known = [];
+  if (process.env.ProgramFiles) known.push(join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe'));
+  if (process.env['ProgramFiles(x86)']) known.push(join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe'));
+  let resolved = known.find((p) => existsSync(p)) ?? null;
+  if (!resolved) resolved = whichOnPath('bash') || whichOnPath('bash.exe') || null;
+
+  if (!resolved) {
+    return { ok: false, path: null, note: '找不到任何 bash → DevSpace 会抛 "No bash shell found"（Windows 无兜底）' };
+  }
+  if (isLegacyWsl(resolved) || isStoreWsl(resolved)) {
+    // 反查真 Git Bash 的位置：Git for Windows 布局固定，`<root>\cmd\git.exe` 与 `<root>\bin\bash.exe` 并存。
+    // 这样修法里的命令能直接粘贴，又不会把某一台机器的盘符写死进脚本。
+    const gitExe = whichOnPath('git') || whichOnPath('git.exe');
+    const gitRoot = gitExe ? dirname(dirname(gitExe)) : null;
+    const binDir = gitRoot ? join(gitRoot, 'bin') : '<你的Git安装目录>\\bin';
+    const rootShown = gitRoot ?? '<你的Git安装目录>';
+    return {
+      ok: false,
+      wsl: true,
+      path: resolved,
+      note:
+        `${resolved} 是 **WSL 启动器，不是 shell** —— 它忽略 -c、不执行命令，` +
+        'ChatGPT 里**所有**命令都会失败（连 `echo` 也不例外）。\n' +
+        '        原因：Windows 上 DevSpace 只在 %ProgramFiles%\\Git\\bin 找 bash，装到别的盘就落到 PATH 第一个命中。\n' +
+        '        修法（三选一）：\n' +
+        `          ① 启动 serve 时前置 PATH：set "PATH=${binDir};%PATH%" && devspace serve\n` +
+        `          ② 建 junction（需管理员）：mklink /J "C:\\Program Files\\Git" "${rootShown}"\n` +
+        '          ③ 把 Git 的 bin 前置到【系统】PATH（用户变量没用，系统 PATH 优先）\n' +
+        '        详见 references/troubleshooting.md「Windows：bash 被 WSL 启动器顶掉」',
+    };
+  }
+  // 真跑一条命令 —— 路径存在不等于它能干活
+  try {
+    const out = run(resolved, ['-c', 'echo devspace-shell-ok'], { timeout: 15000, killSignal: 'SIGKILL' });
+    if (!String(out).includes('devspace-shell-ok')) {
+      return { ok: false, path: resolved, note: `${resolved} 起不来（echo 没有回显）` };
+    }
+  } catch (e) {
+    return { ok: false, path: resolved, note: `${resolved} 执行失败：${errLine(e)}` };
+  }
+  return { ok: true, path: resolved, note: `${resolved}（冒烟测试通过）` };
+}
+
 function doctor() {
   log('=== DevSpace + Tailscale 环境检查 ===\n');
 
   const n = newNodeCheck();
   log(`Node ${process.versions.node}`);
   n.okNode ? ok(n.note) : fail(n.note);
+
+  // shell 放在 Node 之后、Tailscale 之前 —— 它同样是「serve 之前必须为真」的前置条件，
+  // 而且失败时最难查（serve 能起、隧道能通，只有命令全失败）。见 checkDevspaceShell()。
+  const sh = checkDevspaceShell();
+  if (sh.ok) ok(`shell: ${sh.note}`);
+  else if (sh.soft) warn(`shell: ${sh.note}`);
+  else {
+    fail(`shell: ${sh.note}`);
+    if (sh.wsl) ask('把真 Git Bash 放到 DevSpace 能找到的位置（上面三条修法任选其一），改完重启 serve');
+  }
 
   const ts = findTailscale();
   if (!ts) {

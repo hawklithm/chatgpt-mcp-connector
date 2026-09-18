@@ -10,6 +10,14 @@
  *
  * 检查项：Node / npm / Git / Bash / Tailscale / DevSpace / better-sqlite3 / 包管理器
  *
+ * ⚠️ Bash 这一项特意做得比其他项重 —— 因为它是唯一会「静默假绿」的检查：
+ *   前几版只按「推荐顺序」列出找到的 bash，于是 Git 装在 D 盘时它会报 ok，
+ *   而 DevSpace 实际用的是 `C:\Windows\System32\bash.exe`（WSL 启动器，不是 shell），
+ *   在 ChatGPT 那边表现为「bash 接口持续异常」、连 `echo` 都失败。
+ *   现在改成：**复刻 DevSpace 真实的解析顺序**（resolveDevspaceBash），以它的结果为准，
+ *   并对非 WSL 的 bash 真跑一条命令做冒烟测试（smokeTestBash）。
+ *   详见 resolveDevspaceBash() 的注释与 references/cross-platform.md 第二节。
+ *
  * 跨平台：Windows / macOS / Linux 都能跑。三平台的差异集中在三处，脚本里都按平台分支处理了 ——
  *   1. 依赖安装方式：winget ｜ brew / port ｜ apt-get / dnf / yum / pacman / zypper / apk
  *   2. shell 解析：Windows 上 DevSpace 强制要 Git Bash（没有兜底）；macOS/Linux 优先 /bin/bash，
@@ -197,6 +205,135 @@ function checkGit() {
   return item;
 }
 
+/**
+ * 判定「这个 bash 是不是遗留 WSL 启动器」。
+ *
+ * 与 DevSpace 源码 `pi-coding-agent/dist/utils/shell.js` 里的 `isLegacyWslBashPath()` 同款规则。
+ * 这个判定很关键，因为 `C:\Windows\System32\bash.exe` **不是 shell**，它是个只负责转发给
+ * `wsl.exe` 的启动器：不读 `-c` 参数、忽略命令内容，直接把 WSL 的错误吐回来。
+ */
+function isLegacyWslBash(p) {
+  return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/i.test(String(p).replace(/\//g, '\\'));
+}
+
+/** 微软商店版 WSL 的别名（`...\WindowsApps\bash.exe`）—— 同样是 WSL 入口，不是 shell。 */
+function isStoreWslBash(p) {
+  return /\\appdata\\local\\microsoft\\windowsapps\\/i.test(String(p).replace(/\//g, '\\'));
+}
+
+/**
+ * 复刻 **DevSpace 真实的 shell 解析顺序**（源码 `utils/shell.js` → `getShellConfig()`）。
+ *
+ * 为什么必须单独复刻一遍：`checkBash()` 上面那个 candidates 列表是**给人看的推荐顺序**，
+ * 而 DevSpace 只认自己那套死写的顺序，两者**并不等价**。Windows 上真正的顺序是：
+ *
+ *   ① `%ProgramFiles%\Git\bin\bash.exe`
+ *   ② `%ProgramFiles(x86)%\Git\bin\bash.exe`
+ *   ③ `where bash.exe` 的第一个命中
+ *   ④ 都没有 → 抛 `No bash shell found`
+ *
+ * 它**不会**去扫 D:/E:/F: 盘。所以「Git for Windows 装在 D 盘」这种再正常不过的安装，
+ * 会让 DevSpace 直接落到第 ③ 步 —— 而 `C:\Windows\System32` 在系统 PATH 里，
+ * 系统 PATH 又排在用户 PATH 前面，于是命中 `System32\bash.exe`（WSL 启动器），
+ * **所有命令必然失败**（`echo` 也一样，因为 shell 根本没起来）。
+ *
+ * 另外：`settings.json` 里的 `shellPath` 对 `serve` 的 `run_shell` **无效** ——
+ * `dist/pi-tools.js` 调的是 `createBashTool(cwd)`，没传 options，所以拿不到 shellPath。
+ * 也没有任何 `DEVSPACE_*` 环境变量能指定 shell。结论：**只能从「让真 bash 被找到」入手**。
+ */
+function resolveDevspaceBash() {
+  if (!IS_WIN) {
+    // macOS / Linux：/bin/bash 存在即用，根本不看版本
+    if (existsSync('/bin/bash')) return { path: '/bin/bash', via: '固定优先 /bin/bash（存在即用）' };
+    const onPath = which('bash');
+    if (onPath) return { path: onPath, via: 'PATH 上的 bash（本机没有 /bin/bash）' };
+    if (existsSync('/bin/sh')) {
+      return { path: '/bin/sh', via: '兜底 /bin/sh', degraded: true };
+    }
+    return { path: null, via: '（找不到任何 shell）', missing: true };
+  }
+
+  // Windows 第 ①② 步：只在 Program Files 下找
+  const known = [];
+  if (process.env.ProgramFiles) known.push(join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe'));
+  if (process.env['ProgramFiles(x86)']) known.push(join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe'));
+  for (const p of known) {
+    if (existsSync(p)) return { path: p, via: `固定位置 ${p}` };
+  }
+
+  // Windows 第 ③ 步：which() 按 PATH 顺序返回第一个命中，等价于 `where bash.exe` 的第一个
+  const onPath = which('bash') || which('bash.exe');
+  if (onPath) return { path: onPath, via: 'PATH 命中（= where bash.exe 的第一个）' };
+
+  return { path: null, via: '（找不到任何 bash）', missing: true };
+}
+
+/**
+ * 从 PATH 上的 `git.exe` 反推同一份安装里的 Git Bash。
+ *
+ * Git for Windows 的目录布局是固定的：`<root>\cmd\git.exe` 与 `<root>\bin\bash.exe` 并存。
+ * 这条推导比「猜常见安装盘」靠谱得多 —— 用户把 Git 装到哪个盘都能找到，
+ * 而且不会把某一台机器的具体路径写死进脚本。
+ */
+function gitBashFromGitExe() {
+  const gitExe = which('git') || which('git.exe');
+  if (!gitExe) return null;
+  const cand = join(dirname(dirname(gitExe)), 'bin', 'bash.exe');
+  return existsSync(cand) ? cand : null;
+}
+
+/** 把 Windows 路径转成 Git Bash 里能直接用的写法（`D:\a\b` → `/d/a/b`）。 */
+function toPosixPath(p) {
+  return p.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, d) => `/${d.toLowerCase()}`);
+}
+
+/**
+ * 生成「怎么修」的具体命令。
+ *
+ * 刻意不写死任何盘符 —— 安装位置由 `gitBashPath` 推导（Git for Windows 布局固定，
+ * `<root>\bin\bash.exe` 的上一层就是安装根）。找不到时给占位符，让人自己填。
+ */
+function bashFixHint(gitBashPath) {
+  const root = gitBashPath ? dirname(dirname(gitBashPath)) : null;
+  const binDir = root ? join(root, 'bin') : '<你的Git安装目录>\\bin';
+  const gitRoot = root ?? '<你的Git安装目录>';
+  const lines = [];
+  lines.push('修法（按侵入性从低到高，任选其一）：');
+  lines.push('  ① 临时：启动 serve 时把 Git 的 bin 前置到 PATH（无需管理员）——');
+  lines.push(`     cmd:  set "PATH=${binDir};%PATH%" && devspace serve`);
+  lines.push(`     bash: PATH="${toPosixPath(binDir)}:$PATH" devspace serve`);
+  lines.push('  ② 一劳永逸：建目录 junction，让 DevSpace 的第 ① 步就能命中（需管理员开一个终端）——');
+  lines.push(`     mklink /J "C:\\Program Files\\Git" "${gitRoot}"`);
+  lines.push(`     （撤销：rmdir "C:\\Program Files\\Git" —— 只删链接，不动 ${gitRoot} 里的真身）`);
+  lines.push('  ③ 又或者把 Git 的 bin 目录前置到【系统】PATH —— 必须是「系统变量」而不是「用户变量」，');
+  lines.push('     因为系统 PATH 排在用户 PATH 前面，只加到用户变量里仍然会被 System32 抢先。');
+  if (gitBashPath) {
+    lines.push(`  另：本机确实存在可用的 Git Bash（${gitBashPath}），只是不在 DevSpace 会找的位置。`);
+  } else {
+    lines.push('  另：本机没找到可用的 Git Bash，先装一个 Git for Windows：winget install -e --id Git.Git');
+  }
+  return lines.join('\n');
+}
+
+/**
+ * 冒烟测试：**真的**用这个 bash 跑一条命令，确认它不只是「文件存在」。
+ *
+ * 光看路径存在是不够的 —— 这次踩的 `System32\bash.exe` 文件就在那儿、`existsSync` 为真、
+ * `--version` 也未必报错，但它根本不是 shell。只有真跑一条命令才能证明它活着，
+ * 而这也正是 ChatGPT 那边 shell 工具能不能活的充要条件。
+ *
+ * 注意：**不要**拿 WSL 入口来做这个测试，那会拉起 wsl.exe（慢、且可能被安全策略拦截）。
+ * 调用方要先排除 WSL 分支。
+ */
+function smokeTestBash(p) {
+  try {
+    const r = tryExec(p, ['-c', 'echo devspace-bash-ok'], { timeout: TIMEOUT_PROBE });
+    return { ok: r.ok && String(r.out).includes('devspace-bash-ok'), detail: r.ok ? String(r.out).trim() : errLine(r.err) };
+  } catch (e) {
+    return { ok: false, detail: errLine(e) };
+  }
+}
+
 /** Bash —— DevSpace 执行 shell 命令的硬性要求（纯 PowerShell / cmd 不支持） */
 function checkBash() {
   const item = { id: 'bash', name: 'Bash', required: 'Bash 兼容 shell（Git Bash / WSL / MSYS2 / Cygwin）', found: null, path: null };
@@ -292,26 +429,93 @@ function checkBash() {
 
   const best = detailed[0];
   item.candidates = detailed;
-  item.path = best.path;
-  item.flavor = best.flavor;
-  item.found = best.version;
 
-  if (best.flavor.startsWith('PortableGit')) {
+  // ── 分界线：以上排序只是「给人看的推荐」，以下才是红黄绿的判据 ──
+  // DevSpace 不读我们的推荐顺序，它只会按 getShellConfig() 那套死写顺序去解析。
+  // 两者不一致时，必须以「DevSpace 实际会用的那个」为准，否则自检会亮假绿灯：
+  // 典型场景 = Git 装在 D 盘（列表里排第一），DevSpace 却落到 System32 的 WSL 启动器上。
+  const resolved = resolveDevspaceBash();
+  item.devspaceUses = resolved.path;
+  item.devspaceVia = resolved.via;
+  const gitBashElsewhere = gitBashFromGitExe() ?? detailed.find((d) => d.flavor.startsWith('Git Bash') && !d.noExec)?.path ?? null;
+
+  if (resolved.missing) {
+    item.status = 'fail';
+    item.path = null;
+    item.found = null;
+    item.note = IS_WIN
+      ? '未找到任何 bash。DevSpace 每次执行 shell 命令都会抛 "No bash shell found" —— Windows 上没有任何兜底。装 Git for Windows 即可同时获得 Git + Git Bash'
+      : '未找到 bash，也没有 /bin/sh 兜底（极精简容器里常见）。装 bash：Debian/Ubuntu `sudo apt install bash`；Alpine `sudo apk add bash`';
+    return item;
+  }
+
+  // 把 item 的展示字段对齐到「实际会被用的那个」，而不是排序第一的那个
+  const match = detailed.find((d) => d.path.toLowerCase() === resolved.path.toLowerCase());
+  item.path = resolved.path;
+  item.found = match ? match.version : '（未在候选列表中执行过）';
+
+  const realPath = String(resolved.path).replace(/\//g, '\\');
+  const resolvedIsLegacyWsl = IS_WIN && isLegacyWslBash(resolved.path);
+  const resolvedIsStoreWsl = IS_WIN && isStoreWslBash(resolved.path);
+  const resolvedIsGitBash = /\\git\\bin\\bash\.exe$/i.test(realPath);
+
+  if (resolvedIsLegacyWsl || resolvedIsStoreWsl) {
+    // 这是本脚本能抓到的**最恶劣的一种假绿**：明明装了 Git Bash，DevSpace 却用不上。
+    item.status = 'fail';
+    item.statusLabel = '[不可用]';
+    if (gitBashElsewhere) item.noInstallSuggestion = true;
+    item.flavor = 'WSL 入口 —— 不是 shell！';
+    item.note =
+      `DevSpace 会选中 ${resolved.path}（${resolved.via}），但那是 **WSL 启动器**而不是 shell：\n` +
+      '  它不认 `-c` 参数、忽略命令内容，任何命令（连 `echo` 都算）都会立刻失败并返回乱码错误，\n' +
+      '  在 ChatGPT 那边表现为「bash 接口持续异常」。\n' +
+      '根因：Git Bash 没装在 `%ProgramFiles%\\Git` 下，DevSpace 的第 ① ② 步都落空，掉进第 ③ 步。\n' +
+      bashFixHint(gitBashElsewhere);
+    return item;
+  }
+
+  if (resolved.degraded) {
     item.status = 'warn';
-    item.note = `只找到 ${best.flavor}。DevSpace 未必能稳定调用 —— 建议另装 Git for Windows`;
-  } else if (best.noExec) {
-    item.status = 'ok';
-    item.note = '只找到 WSL。WSL 受支持，但 Git Bash 是 Windows 上更简单的原生方案';
-  } else {
-    item.status = 'ok';
-    item.note = best.flavor;
+    item.flavor = 'sh（退化兜底）';
+    item.note =
+      `没有 bash，DevSpace 会退化成 ${resolved.path} 执行命令。多数命令仍可用，` +
+      '但 bash 专有语法（数组、`[[ ]]`、进程替换）会失败。' +
+      '想补上：Debian/Ubuntu `sudo apt install bash`；Alpine `sudo apk add bash`；macOS `brew install bash`';
+    return item;
+  }
+
+  if (/portablegit/i.test(realPath)) {
+    item.status = 'warn';
+    item.flavor = 'PortableGit（某工具自带的副本）';
+    item.note =
+      'DevSpace 会用一个 PortableGit 副本（通常是某个工具自带的精简分发）。' +
+      '它可能缺 coreutils 或没把 `usr/bin` 放进 PATH，表现为「bash 能起来，但 `ls` / `grep` 报 command not found」——' +
+      `和「shell 完全起不来」是两回事。建议另装官方 Git for Windows。${gitBashElsewhere ? `（本机另有可用的 Git Bash：${gitBashElsewhere}）` : ''}`;
+    return item;
+  }
+
+  // 解析出来的既不是 WSL 入口也不是退化 sh —— 可以放心真跑一条命令来验证（不会拉起 wsl.exe）
+  const smoke = smokeTestBash(resolved.path);
+  if (!smoke.ok) {
+    item.status = 'fail';
+    item.statusLabel = '[不可用]';
+    if (gitBashElsewhere) item.noInstallSuggestion = true;
+    item.flavor = `${match?.flavor ?? 'Bash'} —— 文件在，但跑不起来`;
+    item.note =
+      `DevSpace 会选中 ${resolved.path}（${resolved.via}），但冒烟测试（跑一条 \`echo\`）失败：${smoke.detail}\n` +
+      '说明这个 bash 起不来、或缺少必要组件（coreutils 缺失 / PATH 没配好）。ChatGPT 那边的 shell 工具会同样全废。\n' +
+      bashFixHint(gitBashElsewhere);
+    return item;
+  }
+
+  item.status = 'ok';
+  item.flavor = resolvedIsGitBash ? 'Git Bash' : (match?.flavor ?? 'Bash');
+  item.note = `${item.flavor}（冒烟测试通过）`;
+  // 排序第一的 ≠ 实际会用的：说清楚，免得用户以为自检在讲另一个 bash
+  if (best.path && best.path.toLowerCase() !== resolved.path.toLowerCase() && !best.noExec) {
+    item.note += `；⚠️ 注意 DevSpace 实际会用 ${resolved.path}，而不是列表里排第一的 ${best.path}`;
   }
   if (detailed.length > 1) item.note += `；共发现 ${detailed.length} 个 Bash（见下方列表）`;
-  // macOS / Linux 上 DevSpace 只认 /bin/bash（存在即用），装了更新的 Homebrew bash 也不会被选。
-  // 不提示的话，用户会以为「我装了 bash 5 却没生效」是 bug。
-  if (!IS_WIN && best.path !== '/bin/bash' && existsSync('/bin/bash')) {
-    item.note += '；⚠️ 注意 DevSpace 实际会优先用 /bin/bash，而不是上面这个';
-  }
   return item;
 }
 
@@ -579,9 +783,11 @@ if (WANT_JSON) {
   console.log('=== 环境自检：DevSpace × ChatGPT MCP 接入前置依赖 ===\n');
   console.log(`平台: ${process.platform}  Node: ${process.versions.node}\n`);
 
-  const icon = (s) => ({ ok: '[ok]  ', fail: '[缺失]', warn: '[警告]', skip: '[跳过]' })[s] || '[?]';
+  // 多数项只有 ok/fail/warn 三态，但 bash 有第四态「文件在、却不能用」（WSL 入口 / 起不来），
+  // 那时显示「缺失」会误导 —— 允许条目自带 statusLabel 覆盖。
+  const icon = (r) => r.statusLabel || ({ ok: '[ok]  ', fail: '[缺失]', warn: '[警告]', skip: '[跳过]' })[r.status] || '[?]';
   for (const r of results) {
-    console.log(`${icon(r.status)} ${r.name}${r.found ? `: ${r.found}` : ''}`);
+    console.log(`${icon(r)} ${r.name}${r.found ? `: ${r.found}` : ''}`);
     if (r.path) console.log(`        路径: ${r.path}`);
     console.log(`        要求: ${r.required}`);
     if (r.globalRoot) console.log(`        全局 root: ${r.globalRoot}`);
@@ -615,11 +821,23 @@ if (WANT_JSON) {
   if (needInstall.length === 0 && bad.length === 0) {
     console.log('\n✅ 全部就绪，可以进入下一步：配置 DevSpace + 开隧道。');
   } else if (bad.length > 0) {
-    console.log(`\n❌ 有 ${bad.length} 项缺失：${bad.map((b) => b.id).join(', ')}`);
-    console.log('\n--- 安装命令 ---');
+    // 「没装」和「装了但用不了」是两种病，分开报 —— 前者重装即可，后者重装是白费。
+    const unusable = bad.filter((b) => b.statusLabel);
+    const missing = bad.filter((b) => !b.statusLabel);
+    if (unusable.length) console.log(`\n❌ 有 ${unusable.length} 项不可用：${unusable.map((b) => b.id).join(', ')}`);
+    if (missing.length) console.log(`\n❌ 有 ${missing.length} 项缺失：${missing.map((b) => b.id).join(', ')}`);
+    const anyRealInstall = bad.some((b) => !b.noInstallSuggestion);
+    console.log(anyRealInstall ? '\n--- 安装命令 ---' : '\n--- 怎么修 ---');
     for (const b of bad) {
-      const cmds = installCommands(b.id);
       console.log(`\n# ${b.name}`);
+      // 「已有可用 bash、只是 DevSpace 找不到」不该建议重装 —— 重装到 C 盘是下策，
+      // 用户照着执行会白装一遍，还可能把现有 git 弄成两份。
+      if (b.noInstallSuggestion) {
+        console.log('  ⛔ 不用重装：本机已经有能用的 bash，问题只是 DevSpace 找不到它。');
+        console.log('     按上面「说明」里的修法 ①（临时）或 ②（一劳永逸）让它能被找到即可。');
+        continue;
+      }
+      const cmds = installCommands(b.id);
       if (cmds.length === 0) console.log('  （当前平台没有自动安装方案，请手动安装）');
       else cmds.forEach((c) => console.log('  ' + c));
     }

@@ -1,6 +1,6 @@
 ---
 name: chatgpt-mcp-connector
-description: "从 0 到 1 把本地 MCP 服务器（DevSpace）接入 ChatGPT 网页版：自检并补齐环境依赖（Node/npm/Git/Bash/Tailscale，缺失可自动安装）→ 装 DevSpace → 开 Tailscale Funnel 公网隧道 → 写配置 → 在 ChatGPT 插件页建自定义连接器并完成 OAuth 授权。支持 Windows / macOS / Linux 三平台（各平台的安装命令、路径写法、shell 解析、Tailscale 服务模型差异均已处理，macOS/Linux 未实机验证）。含容错：配置损坏拒绝写盘、自动备份与回滚（.bak/rollback）、原子写入、超时重试、临时隧道降级、错误分级。并明确标出必须由用户人工完成的步骤（Tailscale 浏览器登录、Funnel 首次批准、ChatGPT 建连接器与填 Owner password 授权），脚本检测到未登录/未启用会打 🙋 主动提醒用户操作。也用于诊断 'does not implement OAuth' / 'Something went wrong' / invalid_client / path is outside allowed roots / 配置文件损坏等问题。"
+description: "从 0 到 1 把本地 MCP 服务器（DevSpace）接入 ChatGPT 网页版：自检并补齐环境依赖（Node/npm/Git/Bash/Tailscale，缺失可自动安装）→ 装 DevSpace → 开 Tailscale Funnel 公网隧道 → 写配置 → 在 ChatGPT 插件页建自定义连接器并完成 OAuth 授权。支持 Windows / macOS / Linux 三平台（各平台的安装命令、路径写法、shell 解析、Tailscale 服务模型差异均已处理，macOS/Linux 未实机验证）。含容错：配置损坏拒绝写盘、自动备份与回滚（.bak/rollback）、原子写入、超时重试、临时隧道降级、错误分级。并明确标出必须由用户人工完成的步骤（Tailscale 浏览器登录、Funnel 首次批准、ChatGPT 建连接器与填 Owner password 授权），脚本检测到未登录/未启用会打 🙋 主动提醒用户操作。也用于诊断 'does not implement OAuth' / 'Something went wrong' / invalid_client / path is outside allowed roots / bash 或 shell 工具持续异常（所有命令都失败、连 echo 也不例外，返回 RuntimeException 或乱码 —— Windows 上通常是 Git 装在非 C 盘、bash 被 System32 里的 WSL 启动器顶掉）/ 配置文件损坏等问题。"
 agent_created: true
 ---
 
@@ -23,6 +23,10 @@ Node `24.15.0`，ChatGPT 新版中文 UI + Plus 账号。
 
 - 「让 ChatGPT 网页版驱动本地 codex / 读我本地项目」「把本地 MCP 接到 ChatGPT」
 - 报错 `MCP server ... does not implement OAuth` / `Something went wrong...`
+- **`bash` / shell 工具持续异常**：`git status`、`cargo fmt`、`echo`、`ls` 全部失败，
+  ChatGPT 显示 `RuntimeException` 或乱码。**`echo` 也失败是关键判据**（它是 bash 内建命令，
+  它都挂说明 shell 根本没起来，不是 PATH 找不到工具）→ 见 `references/troubleshooting.md`
+  的「Windows：bash 被 WSL 启动器顶掉」
 - 隧道域名变了、`devspace serve` 重启后 ChatGPT 连不上，要重建或 Refresh 连接器
 - 要让 ChatGPT 换一个可访问目录（见 `references/devspace-config.md`）
 - **在 macOS / Linux 上部署**（安装方式、路径写法、Tailscale 权限模型都不一样）
@@ -34,7 +38,7 @@ Node `24.15.0`，ChatGPT 新版中文 UI + Plus 账号。
 
 | 阶段 | 目标 | 关键动作 | 验收信号 | 🙋 人工介入 |
 | --- | --- | --- | --- | --- |
-| 0 | 环境自检 + 补齐依赖 | `env-check.mjs`（`--install` 自动装缺失项） | 脚本报「✅ 全部就绪」 | 装包可能弹 UAC |
+| 0 | 环境自检 + 补齐依赖 | `env-check.mjs`（`--install` 自动装缺失项） | 脚本报「✅ 全部就绪」，且 **Bash 项为 `[ok]`**（报 `[不可用]` 时 shell 工具会全废，见下） | 装包可能弹 UAC |
 | 1 | 装 DevSpace | `npm i -g @waishnav/devspace` | `devspace -v` → `1.0.8` | — |
 | 2 | 装 + 登录 Tailscale | `winget install -e --id Tailscale.Tailscale` → `tailscale up` | `tailscale status` 有 Self | **🙋 浏览器登录授权** |
 | 3 | 开公网隧道 | `tailscale funnel --bg 7676` | `funnel status` 显示 `proxy http://127.0.0.1:7676` | **🙋 首次需点批准链接** |
@@ -142,6 +146,12 @@ devspace -v && devspace doctor
 ```
 
 验收：`env-check` 报「✅ 全部就绪」、`devspace -v` 有版本号。
+
+> ⚠️ **Bash 那一项必须是 `[ok]`**（它会注明「冒烟测试通过」）。
+> 若是 `[不可用]`，说明 DevSpace 解析出的不是真 shell —— Windows 上最常见的是
+> **Git 装在非 C 盘**，于是命中 `C:\Windows\System32\bash.exe`（WSL 启动器，不是 shell），
+> 结果是 ChatGPT 的 shell 工具**所有命令全失败**（`echo` 也不例外）。
+> 修法见 `references/troubleshooting.md` 的「Windows：bash 被 WSL 启动器顶掉」。
 
 ### 阶段 2–3：Tailscale + Funnel → `references/tailscale-funnel.md`
 
