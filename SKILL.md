@@ -1,6 +1,6 @@
 ---
 name: chatgpt-mcp-connector
-description: "从 0 到 1 把本地 MCP 服务器（DevSpace）接入 ChatGPT 网页版：自检并补齐环境依赖（Node/npm/Git/Bash/Tailscale，缺失可自动安装）→ 装 DevSpace → 开 Tailscale Funnel 公网隧道 → 写配置 → 在 ChatGPT 插件页建自定义连接器并完成 OAuth 授权。阶段 6（建连接器 + OAuth 授权）默认由 agent 用 browser-harness 驱动浏览器自动完成，无需用户自己填表：含开发者模式开关、插件页表单填写（React 受控输入）、OAuth 发现自检信号、以及从 ~/.devspace/auth.json 就地读取 ownerToken 填入授权页（绝不回显）。支持 Windows / macOS / Linux 三平台（各平台的安装命令、路径写法、shell 解析、Tailscale 服务模型差异均已处理，macOS/Linux 未实机验证）。含容错：配置损坏拒绝写盘、自动备份与回滚（.bak/rollback）、原子写入、超时重试、临时隧道降级、错误分级。仅剩真正不可代劳的步骤需用户动手（UAC 提权、Tailscale 浏览器登录、Funnel 首次批准、首次允许 Chrome 远程调试、ChatGPT 未登录时的登录墙），脚本检测到未登录/未启用会打 🙋 主动提醒用户操作。也用于诊断 'does not implement OAuth' / 'Something went wrong' / invalid_client / path is outside allowed roots / bash 或 shell 工具持续异常（所有命令都失败、连 echo 也不例外，返回 RuntimeException 或乱码 —— Windows 上通常是 Git 装在非 C 盘、bash 被 System32 里的 WSL 启动器顶掉）/ 配置文件损坏等问题。"
+description: "从 0 到 1 把本地 MCP 服务器（DevSpace）接入 ChatGPT 网页版：自检并补齐环境依赖（Node/npm/Git/Bash/Tailscale，缺失可自动安装）→ 装 DevSpace → 开 Tailscale Funnel 公网隧道 → 写配置 → 在 ChatGPT 插件页建自定义连接器并完成 OAuth 授权。阶段 6（建连接器 + OAuth 授权）默认由 agent 用 browser-harness 驱动浏览器自动完成，无需用户自己填表：含开发者模式开关、插件页表单填写（React 受控输入）、OAuth 发现自检信号、以及从 ~/.devspace/auth.json 就地读取 ownerToken 填入授权页（绝不回显）。支持 Windows / macOS / Linux 三平台（各平台的安装命令、路径写法、shell 解析、Tailscale 服务模型差异均已处理；Windows 与 macOS 已实机跑通完整 0→1，Linux 未实机验证）。含容错：配置损坏拒绝写盘、自动备份与回滚（.bak/rollback）、原子写入、超时重试、临时隧道降级、错误分级。仅剩真正不可代劳的步骤需用户动手（UAC 提权、Tailscale 浏览器登录、Funnel 首次批准、首次允许 Chrome 远程调试、ChatGPT 未登录时的登录墙），脚本检测到未登录/未启用会打 🙋 主动提醒用户操作。也用于诊断 'does not implement OAuth' / 'Something went wrong' / invalid_client / path is outside allowed roots / bash 或 shell 工具持续异常（所有命令都失败、连 echo 也不例外，返回 RuntimeException 或乱码 —— Windows 上通常是 Git 装在非 C 盘、bash 被 System32 里的 WSL 启动器顶掉）/ 配置文件损坏等问题。"
 agent_created: true
 ---
 
@@ -9,15 +9,21 @@ agent_created: true
 把本地自托管 MCP 服务器（本文以 `Waishnav/devspace` 为主）通过公网 HTTPS 隧道接入 ChatGPT 网页版，
 让 ChatGPT 直接读写本地代码、执行命令。
 
-**实测环境**：Windows 11 + Git Bash，DevSpace `1.0.8`，Tailscale `1.102.4`，winget `1.29.290`，
-Node `24.15.0`，ChatGPT 新版中文 UI + Plus 账号。
+**实测环境**
+
+- **Windows**：Windows 11 + Git Bash，DevSpace `1.0.8`，Tailscale `1.102.4`，winget `1.29.290`，Node `24.15.0`
+- **macOS**：Intel Mac，DevSpace `1.0.8`
+- **共同**：ChatGPT 新版中文 UI + Plus 账号
+
 版本差异会影响命令语法（尤其 Tailscale），照做前先跑一遍 `--version`。
 
 **平台支持**：Windows / macOS / Linux 三平台都支持，脚本无需改动。
 差异集中在**依赖安装方式、shell 解析、Tailscale 服务模型、路径写法**四处 ——
 见 `references/cross-platform.md`。
-⚠️ 只有 Windows 做过实机验证；macOS / Linux 的结论来自 DevSpace 源码，**未实机跑过**，
-实机结果与文档不符时以实际输出为准。
+
+- ✅ **Windows**：实机跑通完整 0→1（Windows 11 + Git Bash）
+- ✅ **macOS**：实机跑通完整 0→1（Intel Mac，含阶段 6 建连接器 + OAuth 授权）
+- ⚠️ **Linux**：**未实机验证**，结论来自 DevSpace 源码阅读；实机结果与文档不符时**以实际输出为准**
 
 **浏览器自动化依赖**：阶段 6（建连接器 + OAuth 授权）默认用 **`browser-harness`** 驱动浏览器完成
 （本机实测 `0.1.8`，命令在 `~/.local/bin/browser-harness`）。

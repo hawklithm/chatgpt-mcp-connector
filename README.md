@@ -6,13 +6,16 @@
 It starts with an environment self-check and carries you all the way to "ChatGPT is actually calling
 tools on my machine" — no doc-diving required along the way.
 
-> Tested on Windows 11 + Git Bash · DevSpace `1.0.8` · Tailscale `1.102.4` · Node `24.15.0` ·
+> Tested on Windows 11 + Git Bash · Intel Mac · DevSpace `1.0.8` · Tailscale `1.102.4` · Node `24.15.0` ·
 > the new ChatGPT UI on a Plus account.
 > Version differences affect command syntax (Tailscale especially) — run `--version` before following along.
 >
 > **Platform support**: Windows, macOS and Linux are all supported, with no code changes to the scripts.
-> Only **Windows has been verified on real hardware** — the macOS / Linux conclusions come from reading
-> the DevSpace source, not from an actual run.
+> - ✅ **Windows** (Windows 11 + Git Bash) and ✅ **macOS** (Intel Mac) have both been **run end to end on real
+>   hardware**, stage 6 included (connector creation + OAuth authorization)
+> - ⚠️ **Linux has not been verified on real hardware** — those conclusions come from reading the DevSpace
+>   source; trust the actual output over the docs if they disagree
+>
 > Differences cluster in four places: how dependencies are installed, how the shell is resolved,
 > the Tailscale service model, and path syntax.
 > See [`references/cross-platform.md`](references/cross-platform.md).
@@ -58,7 +61,7 @@ This skill front-loads all of those traps.
 
 | Item | Requirement | Notes |
 | --- | --- | --- |
-| OS | Windows / macOS / Linux | All three work; **verified on Windows 11 + Git Bash** |
+| OS | Windows / macOS / Linux | All three work; **Windows 11 + Git Bash and Intel Mac have both been run end to end**, Linux is unverified |
 | Node.js | `>=20.12 <27` | The package README says `>=22.19 <27`; the CLI itself is more permissive |
 | Bash | Windows: **mandatory** — Git Bash ★ / MSYS2 / Cygwin / WSL / PortableGit<br>macOS / Linux: `/bin/bash` (ships by default) | Windows often has several; picking the wrong one makes DevSpace behave oddly. **On Windows a missing bash is fatal** (no fallback); macOS/Linux degrade to `/bin/sh` |
 | Git | Any recent version | — |

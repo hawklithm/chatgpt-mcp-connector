@@ -5,12 +5,14 @@
 **一个把本地自托管 MCP 服务器接入 ChatGPT 网页版的 Agent Skill。**
 从环境自检开始，一路走到「在 ChatGPT 对话里真的调用到本地工具」为止，中途不需要你去翻文档。
 
-> 实测环境：Windows 11 + Git Bash · DevSpace `1.0.8` · Tailscale `1.102.4` · Node `24.15.0` ·
+> 实测环境：Windows 11 + Git Bash · Intel Mac · DevSpace `1.0.8` · Tailscale `1.102.4` · Node `24.15.0` ·
 > ChatGPT 新版中文 UI + Plus 账号。
 > 版本差异会影响命令语法（尤其 Tailscale），照做前先跑一遍 `--version`。
 >
 > **平台支持**：Windows / macOS / Linux 三平台都支持，脚本无需改动。
-> 但只有 **Windows 做过实机验证** —— macOS / Linux 的结论来自 DevSpace 源码阅读，未实机跑过。
+> - ✅ **Windows**（Windows 11 + Git Bash）与 ✅ **macOS**（Intel Mac）都已**实机跑通完整 0→1**，含阶段 6 建连接器 + OAuth 授权
+> - ⚠️ **Linux 未实机验证**，其结论来自 DevSpace 源码阅读，实机不符时以实际输出为准
+>
 > 差异集中在依赖安装方式、shell 解析、Tailscale 服务模型、路径写法四处，
 > 详见 [`references/cross-platform.md`](references/cross-platform.md)。
 
@@ -49,7 +51,7 @@
 
 | 项 | 要求 | 备注 |
 | --- | --- | --- |
-| 操作系统 | Windows / macOS / Linux | 三平台均可；**实测在 Windows 11 + Git Bash** |
+| 操作系统 | Windows / macOS / Linux | 三平台均可；**Windows 11 + Git Bash 与 Intel Mac 均已实机跑通完整 0→1**，Linux 未实机验证 |
 | Node.js | `>=20.12 <27` | README 官方口径 `>=22.19 <27`，CLI 内部更宽 |
 | Bash | Windows：**必须** Git Bash ★ / MSYS2 / Cygwin / WSL / PortableGit<br>macOS / Linux：`/bin/bash`（一般自带） | Windows 上常并存多个，选错会导致 DevSpace 行为异常；**Windows 缺 bash 直接失败**（无兜底），macOS/Linux 会退化 `/bin/sh` |
 | Git | 任意近期版本 | — |

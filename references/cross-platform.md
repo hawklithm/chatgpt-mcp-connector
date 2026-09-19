@@ -9,9 +9,12 @@
 | --- | --- | --- |
 | shell 解析、平台门控、目录默认值 | DevSpace `1.0.8` 源码：`dist/config.js`、`dist/roots.js`、`dist/user-config.js`、`dist/process-platform.js`、`dist/artifact-tools.js`、`node_modules/@earendil-works/pi-coding-agent/dist/utils/shell.js` | 读源码确认 |
 | Windows 全流程 | 实机跑通（Windows 11 + Git Bash） | ✅ 已实测 |
-| macOS / Linux 的「坑」与安装命令 | 官方文档 + 源码推断 | ⚠️ **未实机验证** |
+| macOS 全流程 | 实机跑通（Intel Mac，含阶段 6 建连接器 + OAuth 授权） | ✅ 已实测 |
+| Linux 的「坑」与安装命令 | 官方文档 + 源码推断 | ⚠️ **未实机验证** |
 
-> macOS / Linux 上跑出与本文不符的结果时，**以实际输出为准**，并把差异回报过来。
+> 三个平台的可信度**不一样，请按上面的标注区别对待**：
+> Windows / macOS 是实测结论；**Linux 那列的安装命令与「坑」是推断的**。
+> Linux（以及任何平台）上跑出与本文不符的结果时，**以实际输出为准**，并把差异回报过来。
 
 ---
 
@@ -176,8 +179,7 @@ sudo tailscale up --operator=$USER         # --operator：把 CLI 权限交给�
 
 ## 六、三平台各自最容易踩的坑
 
-### Windows
-
+### Windows ✅ 已实机验证（Windows 11 + Git Bash，完整 0→1 跑通）
 | 坑 | 表现 | 处理 |
 | --- | --- | --- |
 | bash 是硬依赖 | `No bash shell found` | 装 Git for Windows；确保 `%ProgramFiles%\Git\bin\bash.exe` 或 PATH 上的 bash 存在 |
@@ -188,7 +190,7 @@ sudo tailscale up --operator=$USER         # --operator：把 CLI 权限交给�
 | 装完 PATH 不刷新 | 刚装完仍报命令找不到 | **新开一个终端**，重跑 `env-check` |
 | POSIX 版 CLI shim 依赖 `sed`/`dirname` | `Cannot find module '...dist\cli.js'` | 用绝对路径直连 `dist/cli.js`（**Windows 特有**，macOS/Linux 上 npm 只建软链，没这问题） |
 
-### macOS
+### macOS ✅ 已实机验证（Intel Mac，完整 0→1 跑通）
 
 | 坑 | 表现 | 处理 |
 | --- | --- | --- |
@@ -197,7 +199,7 @@ sudo tailscale up --operator=$USER         # --operator：把 CLI 权限交给�
 | 系统 bash 是 3.2 | bash 5 语法不可用 | 对 DevSpace 够用；要 bash 5 就 `brew install bash`（但 DevSpace 仍会用 `/bin/bash`） |
 | `brew install --cask` 要密码 | 安装过程停在密码提示 | 正常，不是卡死；非交互环境会直接失败，改由用户手动执行 |
 
-### Linux
+### Linux ⚠️ 未实机验证（下表为源码 + 官方文档推断）
 
 | 坑 | 表现 | 处理 |
 | --- | --- | --- |
@@ -227,9 +229,12 @@ sudo tailscale up --operator=$USER         # --operator：把 CLI 权限交给�
 | `allowedRoots` 去重 | 按平台决定是否大小写不敏感（见上） |
 | 主目录 / 盘符根告警 | 三平台一致（`/`、`C:\`、`~` 都会告警） |
 
-**平台翻转测试**：本机是 Windows，无法直接跑 POSIX 分支，所以用「复制脚本 + 改 `IS_WIN`/`IS_MAC` 常量」
-的方式验证了去重、反斜杠告警、主目录告警等逻辑（5/5 通过）；
-`env-check` 的 POSIX 分支同样用这个手法验证过（Linux / macOS 两个变体都不崩、且走到正确的判定分支）。
+**平台翻转测试**：Windows 上跑不了 POSIX 分支，早期用「复制脚本 + 改 `IS_WIN`/`IS_MAC` 常量」
+的方式验证过去重、反斜杠告警、主目录告警等逻辑（5/5 通过）；
+`env-check` 的 POSIX 分支同样用这个手法验证过（两个变体都不崩、且走到正确的判定分支）。
+
+> **macOS 现已实机跑通完整 0→1**，因此 macOS 这一列不再依赖翻转测试。
+> **Linux 仍然只有「翻转测试 + 源码推断」**，没有实机运行记录 —— 按这个差别看待可信度。
 
 **反向验证**：Windows 上的「bash 被 WSL 顶掉」这条，实测对照过头 ——
 不修 PATH 时 `env-check` 报 `[不可用]`（exit 1），把 Git 的 bin 前置到 PATH 后立刻变 `[ok] Git Bash（冒烟测试通过）`（exit 0）。
