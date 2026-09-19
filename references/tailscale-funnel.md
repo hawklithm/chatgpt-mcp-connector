@@ -30,7 +30,8 @@ Tailscale **Serve 不行**（只在 tailnet 内可见），必须用 **Funnel**�
 | macOS（App Store / 独立 App 版） | `/Applications/Tailscale.app/Contents/MacOS/Tailscale` | ❌ **不在**，必须写全路径 |
 | Linux | `/usr/bin/tailscale`（官方脚本）、`/usr/sbin`（发行版包）、`/snap/bin`（snap） | ✅ 在 |
 
-本技能两个脚本的候选表已覆盖以上全部路径（`findTailscale()` / `checkTailscale()`）。
+本技能两个脚本**先跑命令**（`where tailscale` / `which -a tailscale`），命令查不到才回退到以上约定位置
+（`findTailscale()` / `checkTailscale()`）—— Windows 的安装器不把 CLI 写进 PATH，所以这层回退是必需的。
 
 ### 登录
 

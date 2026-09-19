@@ -93,6 +93,11 @@ DevSpace 的 shell 工具解析顺序（源码 `pi-coding-agent/dist/utils/shell
 > Windows 无 bash → 报**缺失**（因为真的跑不了）。
 > Windows 上它还会**复刻 DevSpace 的解析顺序**，并对解析出的 bash **真跑一条命令**做冒烟测试 ——
 > 光看路径存在是不够的（`System32\bash.exe` 也在那儿，`existsSync` 同样为真）。
+>
+> 另外，**它不靠「猜安装目录」判断装没装**：一律跑命令 —— `where bash.exe`、`where git` 反推同一份安装、
+> `git --version`、`npm -v`、`tailscale version`。唯一照抄目录的地方是复刻 DevSpace 的
+> `%ProgramFiles%\Git\bin` 解析顺序（要预测它的行为就只能照抄），且那条路径由 `%ProgramFiles%` 推导。
+> 完整理由见 `references/env-setup.md` 的「检查原则：跑命令，不要看目录」。
 
 ---
 
@@ -200,7 +205,7 @@ sudo tailscale up --operator=$USER         # --operator：把 CLI 权限交给�
 | 守护进程没起 | `BackendState` 读不到 | `sudo systemctl enable --now tailscaled` |
 | `XDG_DATA_HOME` 无效 | 改了环境变量但状态库还在 `~/.local/share` | 用 `DEVSPACE_STATE_DIR` 显式指定 |
 | 精简发行版没有 bash | shell 退化成 `sh`，脚本语法报错 | Alpine：`sudo apk add bash`；装完 `env-check` 会从「警告」变「就绪」 |
-| snap 版 Tailscale | 路径在 `/snap/bin/tailscale` | 两个脚本的候选表已包含 |
+| snap 版 Tailscale | 路径在 `/snap/bin/tailscale` | 两个脚本的约定位置列表已包含（`which -a tailscale` 本来也能查到） |
 | 大小写敏感 | 白名单目录「明明写了却不在里面」 | 确认大小写与磁盘一致 |
 
 ---
@@ -214,6 +219,7 @@ sudo tailscale up --operator=$USER         # --operator：把 CLI 权限交给�
 | 包管理器探测 | Windows `winget` ｜ macOS `brew` + `port` ｜ Linux `apt-get`/`dnf`/`yum`/`pacman`/`zypper`/`apk` |
 | 安装命令选择 | 按平台返回对应命令；含 `sudo`/管道的交给用户手动执行，不代跑 |
 | 找不到包管理器 | **跳过并说明**，不会抛 `ENOENT`（早年 Windows-only 的判断已泛化到三平台） |
+| 依赖是否已安装 | **跑命令判断，不看安装目录**：`where bash.exe` / `where git` / `which -a tailscale` / `git --version` / `npm -v`；bash 候选另从 PATH 上的 `git.exe` 反推（Git 装在哪个盘都对）。脚本里不写死 `C:/D:/E:/F:` 盘符 |
 | bash 判定 | **复刻 DevSpace 的解析顺序**（`resolveDevspaceBash()`），以解析结果为准 —— 不再只看「推荐排序」；再对非 WSL 的 bash **真跑一条命令**做冒烟测试（`smokeTestBash()`）。Windows 缺失 = 直接判失败；macOS/Linux 无 bash 但有 `/bin/sh` → 只警告 |
 | WSL 入口识别 | 解析到 `System32\bash.exe` / `WindowsApps\bash.exe` → 判 `[不可用]` 并给出三条修法；**不执行**它（会拉起 `wsl.exe`，慢且可能被安全策略拦截） |
 | 「装了但用不了」的措辞 | 此类条目标 `[不可用]`（而非 `[缺失]`），且**不给重装建议** —— 本机已有可用 bash 时，重装只会多出一份 Git |

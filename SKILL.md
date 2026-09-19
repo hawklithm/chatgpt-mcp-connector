@@ -105,6 +105,8 @@ node $SK/env-check.mjs --install --only node,git   # 只装指定项
 - Node 按 `>=20.12 <27` 校验（README 口径是 `>=22.19 <27`，CLI 内部更宽）。
 - Bash 会**列出所有候选并标推荐项**（★ Git Bash > MSYS2 > Cygwin > WSL > PortableGit），
   因为 Windows 上常同时存在多个 Bash，选错会导致 DevSpace 行为异常。
+  候选是**跑命令查出来的**（`where bash.exe`，再从 `where git` 反推同一份安装里的 Git Bash），
+  不是遍历固定安装目录 —— Git 装在哪个盘都能看见，脚本里也没有任何盘符硬编码。
   WSL 入口**只检测不执行**（执行会拉起 `wsl.exe`，代价高且可能被安全策略拦截）。
 - Tailscale 会读 `status --json` 的 **`BackendState`** 判断登录态，未登录时提醒用户。
 - 容错：每项独立 try/catch；外部命令**带超时**（探测 15s / 安装 10min）；

@@ -309,6 +309,9 @@ node $SK/env-check.mjs --install --only node,git   # install only the named item
 Exit codes: `0` all ready / `1` something missing / `2` the script itself failed.
 
 - Node is validated against `>=20.12 <27`.
+- Whether a dependency is installed is decided by **running commands** (`where` / `which` / `--version`),
+  never by guessing install directories. Bash candidates come from `where bash.exe` plus a derivation
+  from `where git`, so Git on any drive is found — and the scripts contain no hard-coded drive letters.
 - Bash: **all candidates are listed with a recommended one** (★ Git Bash > MSYS2 > Cygwin > WSL > PortableGit).
 - Tailscale login state is read from `BackendState` in `status --json`, with per-OS guidance when unlogged.
 - Every check is independently wrapped; external commands run with timeouts (15s probe / 10min install).

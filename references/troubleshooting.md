@@ -138,6 +138,9 @@ node $SK/env-check.mjs
 看 `Bash` 那一项：如果显示 `[不可用]` 且路径是 `C:\WINDOWS\system32\bash.EXE`，就是这个问题。
 同时它会列出「发现的 Bash」—— 你通常能在里面看到那个真正可用的 Git Bash，只是**不在 DevSpace 会找的位置**。
 
+> 它列候选的方式是**跑命令**：`where bash.exe` 拿 PATH 上的全部 bash，再从 `where git` 反推同一份安装里的
+> Git Bash —— 而不是去遍历固定安装目录。所以 Git 装在哪个盘、或用的是 MSYS2，都照样能看见。
+
 ### 三条修法（按侵入性从低到高，任选其一）
 
 > 下面用 `<GIT>` 代表你的 Git for Windows 安装根目录（默认是 `C:\Program Files\Git`，

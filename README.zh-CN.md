@@ -283,6 +283,8 @@ node $SK/env-check.mjs --install --only node,git   # 只装指定项
 退出码：`0` 全就绪 / `1` 有缺失 / `2` 脚本自身出错。
 
 - Node 按 `>=20.12 <27` 校验；
+- 判断依赖装没装一律**跑命令**（`where` / `which` / `--version`），不去猜安装目录；
+  Bash 候选从 `where bash.exe` 和 `where git` 反推，Git 装在哪个盘都能看见；
 - Bash 会**列出所有候选并标推荐项**（★ Git Bash > MSYS2 > Cygwin > WSL > PortableGit）；
 - Tailscale 读 `status --json` 的 `BackendState` 判断登录态，未登录时按平台给出不同提示；
 - 每项独立 try/catch，外部命令带超时（探测 15s / 安装 10min）；

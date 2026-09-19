@@ -148,6 +148,83 @@ function firstExisting(paths) {
   return null;
 }
 
+/**
+ * 枚举 PATH 上**全部**同名可执行文件（不止第一个）。
+ *
+ * 走系统自带的查找命令：Windows `where`，macOS / Linux `which -a`。
+ * 这是本 skill 的检查原则 —— **判断「装没装」要问系统，不要去看固定安装目录**。
+ * 猜目录有两个毛病：① 只能覆盖你事先猜到的位置（Git 装在 D 盘、PortableGit、MSYS2 都会漏）；
+ * ② 会把某一台机器的盘符布局写进公开代码里。
+ */
+function whichAll(name) {
+  const out = [];
+  const seen = new Set();
+  const push = (p) => {
+    const v = String(p || '').trim();
+    if (!v) return;
+    const k = v.toLowerCase();
+    if (!seen.has(k)) { seen.add(k); out.push(v); }
+  };
+
+  // ① 问系统
+  try {
+    const r = tryExec(IS_WIN ? 'where' : 'which', IS_WIN ? [name] : ['-a', name], { timeout: TIMEOUT_PROBE });
+    if (r.ok) String(r.out).split(/\r?\n/).forEach(push);
+  } catch {
+    /* 系统没有查找命令（极精简环境）→ 落到下面的 PATH 扫描 */
+  }
+
+  // ② 兜底：自己扫一遍 PATH（拿不到 `where` / `which` 的输出时才走这里）
+  if (out.length === 0) push(which(name));
+  return out;
+}
+
+/**
+ * 从 PATH 上的每一个 `git` 反推同一份安装里的 Git Bash。
+ *
+ * Git for Windows 布局固定（`<root>\cmd\git.exe` 与 `<root>\bin\bash.exe` 并存），
+ * 但入口不止一个（还有 `<root>\mingw64\bin\git.exe`），所以这里**不假设层级**，
+ * 直接逐级向上找 `<祖先目录>\bin\bash.exe`。这样 Git 装在哪个盘都能找到，
+ * 而脚本里一个盘符都不用写。
+ */
+function gitBashCandidates() {
+  if (!IS_WIN) return [];
+  const out = [];
+  for (const gitExe of [...whichAll('git'), ...whichAll('git.exe')]) {
+    let dir = dirname(gitExe);
+    for (let i = 0; i < 4; i++) {
+      const cand = join(dir, 'bin', 'bash.exe');
+      if (existsSync(cand)) { out.push(cand); break; }
+      const up = dirname(dir);
+      if (up === dir || up === '.') break;
+      dir = up;
+    }
+  }
+  return out;
+}
+
+/**
+ * 「约定位置」——**只**保留两类，且都不含盘符字面量：
+ *   ① DevSpace 自己会去撞的那两个位置（`%ProgramFiles%\Git\bin`）—— 用来复刻它的行为，见 resolveDevspaceBash()；
+ *   ② POSIX 的 `\/bin/bash` 之类标准位置。
+ * 其余一律靠 whichAll() / gitBashCandidates() 从命令输出里拿。
+ */
+function conventionalBashPaths() {
+  if (IS_WIN) {
+    return [
+      process.env.ProgramFiles && join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe'),
+      process.env['ProgramFiles(x86)'] && join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe'),
+    ].filter(Boolean);
+  }
+  return [
+    '/bin/bash',          // 绝大多数发行版与 macOS 的标配
+    '/usr/bin/bash',
+    '/opt/homebrew/bin/bash',  // Homebrew（Apple Silicon）
+    '/usr/local/bin/bash',     // Homebrew（Intel）
+    '/opt/local/bin/bash',     // MacPorts
+  ];
+}
+
 function parseVersion(str) {
   const m = String(str || '').match(/(\d+)\.(\d+)(?:\.(\d+))?/);
   return m ? { major: +m[1], minor: +m[2], patch: +(m[3] || 0) } : null;
@@ -253,7 +330,9 @@ function resolveDevspaceBash() {
     return { path: null, via: '（找不到任何 shell）', missing: true };
   }
 
-  // Windows 第 ①② 步：只在 Program Files 下找
+  // Windows 第 ①② 步：DevSpace 源码里就是**写死在 Program Files 下找**的，这里必须照抄，
+  // 否则得出的结论会和它不一致。这是全脚本唯一一处「看目录」—— 因为要复刻的不是我们的判断，
+  // 而是它自己的行为；路径由 %ProgramFiles% 环境变量推导，不含任何盘符字面量。
   const known = [];
   if (process.env.ProgramFiles) known.push(join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe'));
   if (process.env['ProgramFiles(x86)']) known.push(join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe'));
@@ -271,15 +350,12 @@ function resolveDevspaceBash() {
 /**
  * 从 PATH 上的 `git.exe` 反推同一份安装里的 Git Bash。
  *
- * Git for Windows 的目录布局是固定的：`<root>\cmd\git.exe` 与 `<root>\bin\bash.exe` 并存。
  * 这条推导比「猜常见安装盘」靠谱得多 —— 用户把 Git 装到哪个盘都能找到，
- * 而且不会把某一台机器的具体路径写死进脚本。
+ * 而且不会把某一台机器的具体路径写死进脚本。实现复用 `gitBashCandidates()`，
+ * 免得两个函数对「git.exe 在第几层」各有一套假设。
  */
 function gitBashFromGitExe() {
-  const gitExe = which('git') || which('git.exe');
-  if (!gitExe) return null;
-  const cand = join(dirname(dirname(gitExe)), 'bin', 'bash.exe');
-  return existsSync(cand) ? cand : null;
+  return gitBashCandidates()[0] ?? null;
 }
 
 /** 把 Windows 路径转成 Git Bash 里能直接用的写法（`D:\a\b` → `/d/a/b`）。 */
@@ -338,31 +414,30 @@ function smokeTestBash(p) {
 function checkBash() {
   const item = { id: 'bash', name: 'Bash', required: 'Bash 兼容 shell（Git Bash / WSL / MSYS2 / Cygwin）', found: null, path: null };
 
-  const candidates = IS_WIN
-    ? [
-        // 常见 Git for Windows 安装位置（含自定义盘符）
-        'C:\\Program Files\\Git\\bin\\bash.exe',
-        'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
-        'C:\\Program Files\\Git\\bin\\bash.exe',
-        'C:\\Program Files\\Git\\bin\\bash.exe',
-        'C:\\Program Files\\Git\\bin\\bash.exe',
-        process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe'),
-        // MSYS2 / Cygwin
-        'C:\\msys64\\usr\\bin\\bash.exe',
-        'C:\\cygwin64\\bin\\bash.exe',
-        // WSL 入口
-        'C:\\Windows\\System32\\bash.exe',
-      ].filter(Boolean)
-    : [
-        // macOS / Linux：/bin/bash 是绝大多数发行版与 macOS 的标配
-        '/bin/bash',
-        '/usr/bin/bash',
-        // Homebrew（Apple Silicon 在 /opt/homebrew，Intel 在 /usr/local）
-        '/opt/homebrew/bin/bash',
-        '/usr/local/bin/bash',
-        // 少数从源码装到 /opt 的场景
-        '/opt/local/bin/bash',
-      ];
+  // ── 候选从哪来：一律靠「跑命令」，不靠「猜目录」──
+  //   ① PATH 上所有 bash：Windows `where bash.exe`，POSIX `which -a bash`
+  //   ② 从 PATH 上每一个 `git` 反推出的 Git Bash（Git 装在哪个盘都找得到）
+  //   ③ 约定位置：Windows 只留 DevSpace 自己会去撞的 `%ProgramFiles%\Git\bin`（见 resolveDevspaceBash）；
+  //      POSIX 留 `/bin/bash` 等标准位置
+  // 刻意不写死 C:/D:/E:/F: 这类盘符 —— 那样既查不全（漏 MSYS2、PortableGit、非 C 盘安装），
+  // 又会把作者本机的盘符布局带进公开仓库。
+  const candidates = [];
+  const addCand = (p) => {
+    if (p && !candidates.some((x) => x.toLowerCase() === String(p).toLowerCase())) candidates.push(p);
+  };
+  whichAll('bash').forEach(addCand);
+  if (IS_WIN) {
+    whichAll('bash.exe').forEach(addCand);
+    gitBashCandidates().forEach(addCand);
+    addCand(which('bash.exe'));
+  } else {
+    addCand(which('bash'));
+  }
+  conventionalBashPaths()
+    .filter((p) => {
+      try { return existsSync(p); } catch { return false; }
+    })
+    .forEach(addCand);
 
   // 分档：数值越小越推荐。这**只影响本脚本的展示顺序**，不决定 DevSpace 实际用哪个 bash ——
   // Windows 上 DevSpace 固定先找 %ProgramFiles%\Git\bin\bash.exe，找不到才扫 PATH；
@@ -385,11 +460,11 @@ function checkBash() {
     return { flavor: 'Bash', rank: 6 };
   };
 
-  // 收集全部候选：PATH 里的 + 固定路径里的（不提前 break，便于把选择权交给用户判断）
-  const all = [];
-  const fromPath = which('bash') || which('bash.exe');
-  if (fromPath) all.push(fromPath);
-  for (const c of candidates) if (existsSync(c) && !all.some((x) => x.toLowerCase() === c.toLowerCase())) all.push(c);
+  // candidates 里已经含「命令查出来的」+「约定位置」两类，且都已确认存在。
+  // 这里不提前 break —— 把所有候选都摆出来，把判断权交给用户。
+  const all = candidates.filter((c) => {
+    try { return existsSync(c); } catch { return false; }
+  });
 
   if (all.length === 0) {
     // macOS / Linux 上 DevSpace 找不到 bash 会**退化成 /bin/sh**（源码 utils/shell.js 的兜底分支），
@@ -407,7 +482,9 @@ function checkBash() {
     }
     item.status = 'fail';
     item.note = IS_WIN
-      ? '未找到任何 Bash。DevSpace 无法执行 shell 命令 —— 装 Git for Windows 即可同时获得 Git + Git Bash'
+      ? '未找到任何 Bash（`where bash.exe` 没命中，PATH 上也没有）。DevSpace 无法执行 shell 命令 —— ' +
+        '装 Git for Windows 即可同时获得 Git + Git Bash；' +
+        '若你用 MSYS2 / Cygwin，把它的 `usr\\bin` / `bin` 加进 PATH 后重跑自检'
       : '未找到 bash，也没有 /bin/sh 兜底（极精简容器里常见）。装 bash：Debian/Ubuntu `sudo apt install bash`；Alpine `sudo apk add bash`';
     return item;
   }
@@ -542,8 +619,14 @@ function tailscaleUpHint() {
 
 /** Tailscale —— 提供公网 HTTPS 隧道（ChatGPT 够不到 127.0.0.1） */
 function checkTailscale() {
-  const candidates = IS_WIN
-    ? [join(process.env.ProgramFiles || 'C:\\Program Files', 'Tailscale', 'tailscale.exe'), 'C:\\Program Files (x86)\\Tailscale\\tailscale.exe']
+  // 先跑命令（Windows `where tailscale`，POSIX `which -a tailscale`）；
+  // 只有命令查不到时才回退到约定位置 —— Tailscale 的 Windows 安装器**不把 CLI 写进 PATH**，
+  // 所以这层回退是必需的。路径一律由环境变量 / 标准位置推导，不写死盘符。
+  const conventional = IS_WIN
+    ? [
+        process.env.ProgramFiles && join(process.env.ProgramFiles, 'Tailscale', 'tailscale.exe'),
+        process.env['ProgramFiles(x86)'] && join(process.env['ProgramFiles(x86)'], 'Tailscale', 'tailscale.exe'),
+      ].filter(Boolean)
     : [
         // macOS：Homebrew / 官方 pkg 会装到这两处；独立 App / App Store 版的 CLI 在 bundle 内，不在 PATH
         '/usr/local/bin/tailscale',
@@ -551,11 +634,10 @@ function checkTailscale() {
         '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
         // Linux：官方脚本装到 /usr/bin，发行版包可能在 /usr/sbin，snap 装到 /snap/bin
         '/usr/bin/tailscale',
-        '/usr/local/bin/tailscale',
         '/usr/sbin/tailscale',
         '/snap/bin/tailscale',
       ];
-  const bin = which('tailscale') || which('tailscale.exe') || firstExisting(candidates);
+  const bin = whichAll('tailscale')[0] || firstExisting(conventional);
   const item = { id: 'tailscale', name: 'Tailscale', required: '>=1.38.3（1.52 起 CLI 语法变更，建议用新版）', found: null, path: bin };
   if (!bin) {
     item.status = 'fail';

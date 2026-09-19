@@ -82,6 +82,33 @@ node $SK/env-check.mjs --install    # 确认缺失项后再加这个（先征得
    `references/troubleshooting.md` 的「Windows：bash 被 WSL 启动器顶掉」。
    注意往**用户变量** PATH 里加 Git 是没用的 —— 系统 PATH 排在用户 PATH 前面。
 
+### 检查原则：跑命令，不要看目录
+
+判断「某个依赖装没装」，**一律跑它自己的命令**，不要去看固定安装目录：
+
+| 依赖 | 正确的检查方式 | 不要这样做 |
+| --- | --- | --- |
+| Node | `node -v`（脚本内读 `process.versions.node`） | 去 `C:\Program Files\nodejs` 看有没有 `node.exe` |
+| npm | `npm -v` | 同上 |
+| Git | `git --version`，定位用 `where git` / `which -a git` | 猜 `C:\Program Files\Git` |
+| Bash | `where bash.exe` / `which -a bash`，再**真跑一条命令**验收 | 遍历各盘符下的 `Program Files\Git\bin\bash.exe` |
+| Tailscale | `tailscale version`，定位用 `where tailscale` | 猜安装目录 |
+| DevSpace | `npm root -g` 推出的路径 + `devspace -v` | 猜 npm 全局目录 |
+
+为什么这条原则重要：
+
+1. **猜目录必然漏。** 装在非 C 盘、PortableGit、MSYS2、Homebrew、`snap`……组合是无穷的；
+   `where` / `which` 直接问系统，一次问全。
+2. **猜目录会把作者本机的布局带进公开代码。** 「某个具体盘符 + 某个具体安装目录」这样的字面量
+   一旦写进脚本，公开仓库就带上了机器指纹 —— 对用户没用，对作者有害。
+
+只有两个**必要**的例外，而且它们都不是「猜」，是**复刻别人的行为**：
+
+- **Tailscale（Windows）**：官方安装器**不把 CLI 写进 PATH**，`where tailscale` 查不到，
+  所以要回退到 `%ProgramFiles%\Tailscale\tailscale.exe`（路径由环境变量推导，不写死盘符）。
+- **DevSpace 会选哪个 bash**：DevSpace 自己就是**写死在 `%ProgramFiles%\Git\bin` 里找**的。
+  要预测它的行为就必须照抄这套顺序 —— 这是本技能唯一一处「看目录」，且路径同样由 `%ProgramFiles%` 推导。
+
 ### 快速手工确认
 
 ```bash
