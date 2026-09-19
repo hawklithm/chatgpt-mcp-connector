@@ -2,9 +2,14 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-**An Agent Skill that connects a self-hosted local MCP server to the ChatGPT web UI.**
+**An onboarding skill built on top of `Waishnav/devspace`: an Agent Skill that connects a self-hosted
+local MCP server to the ChatGPT web UI.**
 It starts with an environment self-check and carries you all the way to "ChatGPT is actually calling
 tools on my machine" — no doc-diving required along the way.
+
+> **This repo contains none of DevSpace's source and does not modify it.** The MCP server that actually
+> does the work is **`Waishnav/devspace`**; this repo is only an "install → configure → connect to
+> ChatGPT" guidance layer wrapped around it — see "What this repo is" below.
 
 > Tested on Windows 11 + Git Bash · Intel Mac · DevSpace `1.0.8` · Tailscale `1.102.4` · Node `24.15.0` ·
 > the new ChatGPT UI on a Plus account.
@@ -19,6 +24,32 @@ tools on my machine" — no doc-diving required along the way.
 > Differences cluster in four places: how dependencies are installed, how the shell is resolved,
 > the Tailscale service model, and path syntax.
 > See [`references/cross-platform.md`](references/cross-platform.md).
+
+---
+
+## What this repo is (and how it relates to DevSpace)
+
+**To be clear: this repo is not an MCP server, and it implements none of the MCP protocol.**
+
+The MCP server that actually does the work is **`Waishnav/devspace`** (npm package
+`@waishnav/devspace`, "DevSpace" below). This repo **contains none of its source and does not modify
+it** — it only wraps an "install → configure → connect to ChatGPT" guidance layer around it:
+
+| | Role | What this repo does with it |
+| --- | --- | --- |
+| **DevSpace** | The MCP server itself: tool implementations, path allow-list, OAuth authorization, workspaces and sessions | Only calls its CLI and config files; **not a single line of its source is changed** |
+| **Tailscale** | Exposes a local port as public HTTPS | Only calls its CLI (`tailscale up` / `funnel`) |
+| **ChatGPT connector** | The ChatGPT-side entry point; must be created and authorized in the web UI | The agent does it for you via browser automation |
+| **This repo** | **One Agent Skill** + 2 helper scripts + a set of docs | Strings the three above into **one path that runs end to end and is hard to get wrong** |
+
+So the accurate framing is: **DevSpace makes it *connectable*; this repo makes it *installed right,
+connected, and free of landmines*.**
+
+It is not about "how to implement MCP" but about "where you trip over while installing DevSpace
+following the official docs" — the specifics are in the next section.
+
+> If you want to understand or improve the MCP server itself, go to **`Waishnav/devspace`**.
+> If you want to get it connected to ChatGPT without the landmines, use this skill.
 
 ---
 
@@ -531,7 +562,8 @@ On macOS / Linux pass forward-slash roots instead (e.g. `/home/you/projects/my-a
 
 ## External references
 
-- DevSpace docs: the `docs/` directory of the `Waishnav/devspace` repository
+- **DevSpace (the upstream core dependency)**: the MCP server itself — repo `Waishnav/devspace`,
+  npm package `@waishnav/devspace`
 - OpenAI connector docs: `developers.openai.com/plugins/deploy/connect-chatgpt`
 - Tailscale Funnel: `tailscale.com/kb/1247/funnel-serve-use-cases`
 

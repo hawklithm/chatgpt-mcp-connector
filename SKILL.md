@@ -6,8 +6,14 @@ agent_created: true
 
 # ChatGPT 自定义 MCP 连接器：从 0 到 1 接入本地 MCP 服务器
 
-把本地自托管 MCP 服务器（本文以 `Waishnav/devspace` 为主）通过公网 HTTPS 隧道接入 ChatGPT 网页版，
-让 ChatGPT 直接读写本地代码、执行命令。
+把本地自托管 MCP 服务器通过公网 HTTPS 隧道接入 ChatGPT 网页版，让 ChatGPT 直接读写本地代码、执行命令。
+
+**上游核心依赖是 `Waishnav/devspace`**（npm 包 `@waishnav/devspace`，下文简称 DevSpace）——
+**MCP 服务器本体由它提供**：工具实现、路径白名单、OAuth 授权、工作区与会话都在它那边。
+
+> **本 skill 不含 DevSpace 的源码，也不修改它。** 它只是 DevSpace 外面的一层
+> 「安装 → 配置 → 接入 ChatGPT」引导（1 个 skill + 2 个脚本 + 一组文档），
+> 负责让 DevSpace **装得对、连得上、不踩坑**；想改 MCP 服务器本身的实现，请直接去看 `Waishnav/devspace`。
 
 **实测环境**
 

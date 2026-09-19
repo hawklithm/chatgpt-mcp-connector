@@ -2,8 +2,11 @@
 
 [English](README.md) · **简体中文**
 
-**一个把本地自托管 MCP 服务器接入 ChatGPT 网页版的 Agent Skill。**
+**一个基于 `Waishnav/devspace` 搭建的接入向导：把本地自托管 MCP 服务器接入 ChatGPT 网页版的 Agent Skill。**
 从环境自检开始，一路走到「在 ChatGPT 对话里真的调用到本地工具」为止，中途不需要你去翻文档。
+
+> **本仓库不含 DevSpace 的源码，也不修改它。** 真正干活的 MCP 服务器是 **`Waishnav/devspace`**；
+> 本仓库只是它外面的一层「安装 → 配置 → 接入 ChatGPT」引导 —— 详见下面「这个仓库是什么」一节。
 
 > 实测环境：Windows 11 + Git Bash · Intel Mac · DevSpace `1.0.8` · Tailscale `1.102.4` · Node `24.15.0` ·
 > ChatGPT 新版中文 UI + Plus 账号。
@@ -15,6 +18,30 @@
 >
 > 差异集中在依赖安装方式、shell 解析、Tailscale 服务模型、路径写法四处，
 > 详见 [`references/cross-platform.md`](references/cross-platform.md)。
+
+---
+
+## 这个仓库是什么（以及它与 DevSpace 的关系）
+
+**先说清楚：本仓库不是一个 MCP 服务器，也没有实现任何 MCP 协议。**
+
+真正干活的 MCP 服务器是 **`Waishnav/devspace`**（npm 包 `@waishnav/devspace`，下文简称 DevSpace）。
+本仓库**不含它的任何源码、也不修改它**，只是在它外面包了一层「安装 → 配置 → 接入 ChatGPT」的引导：
+
+| | 角色 | 本仓库对它做了什么 |
+| --- | --- | --- |
+| **DevSpace** | MCP 服务器本体：工具实现、路径白名单、OAuth 授权、工作区与会话 | 只调用它的 CLI 与配置文件；**一行源码都没改** |
+| **Tailscale** | 把本机端口暴露成公网 HTTPS | 只调用它的 CLI（`tailscale up` / `funnel`） |
+| **ChatGPT 连接器** | ChatGPT 侧的入口，需在网页上创建并授权 | 由 agent 用浏览器自动化代你完成 |
+| **本仓库** | **一个 Agent Skill** + 2 个辅助脚本 + 一组文档 | 把上面三者**串成一条能自动跑完、且不容易漏步的路** |
+
+所以更准确的定位是：**DevSpace 负责「能连」，本仓库负责「装得对、连得上、不踩坑」。**
+
+它不解决「怎么实现 MCP」，只解决「照官方文档装 DevSpace 时会在哪一步翻车」——
+具体是哪些坑，见下一节。
+
+> 想了解或改进 MCP 服务器本身的实现，请看 **`Waishnav/devspace`**；
+> 想在不踩坑的前提下把它接上 ChatGPT，才用这个 skill。
 
 ---
 
@@ -475,7 +502,7 @@ macOS / Linux 把 `--roots` 换成正斜杠路径（如 `/home/you/projects/my-a
 
 ## 外部参考
 
-- DevSpace 官方文档：仓库 `Waishnav/devspace` 下的 `docs/`
+- **DevSpace（上游核心依赖）**：MCP 服务器本体，仓库 `Waishnav/devspace`，npm 包 `@waishnav/devspace`
 - OpenAI 连接器文档：`developers.openai.com/plugins/deploy/connect-chatgpt`
 - Tailscale Funnel：`tailscale.com/kb/1247/funnel-serve-use-cases`
 
