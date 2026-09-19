@@ -433,7 +433,8 @@ function doctor() {
   } else {
     log('✅ 本机侧没有待办的人工登录/授权步骤。');
   }
-  log('   （ChatGPT 侧建连接器 + 填 Owner password 授权，同样必须由人在浏览器完成）');
+  log('   （ChatGPT 侧建连接器 + OAuth 授权可由 agent 用 browser-harness 自动完成；');
+  log('     没装 browser-harness 时才需要人工在浏览器里填表 —— 见 references/chatgpt-connector.md）');
 }
 
 /** 备份已有文件到 `<文件>.bak`（覆盖旧备份 —— 只保留最近一次可用的好状态）。 */
@@ -670,20 +671,30 @@ function apply(args) {
   log('  [脚本可做] 3) 开隧道：');
   log(`               tailscale funnel --bg ${cfg.port}`);
   log('');
-  log('  🙋 以下步骤【必须由你亲自在浏览器完成】，脚本代替不了：');
-  log('     4) 登录 ChatGPT → 设置 → 账户安全与登录 → 打开【开发者模式】（只需一次）');
-  log('     5) 打开 https://chatgpt.com/plugins → 右上角「创建应用」');
+  log('  🤖 以下步骤【默认由 agent 用 browser-harness 自动完成，用户不用自己填表】：');
+  log('     4) 打开【开发者模式】：设置 → 账户安全与登录 → 开发者模式（只需一次）');
+  log('     5) 建连接器（用深链接直达新插件弹窗，别去列表页找按钮）：');
+  log('          https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins');
   log(`          服务器 URL : ${cfg.publicBaseUrl ?? '<publicBaseUrl>'}/mcp`);
   log('          身份验证   : OAUTH（保持默认）');
   log('          勾选「我了解并希望继续」→ 点「创建」（提交是异步的，至少等 6 秒再判断成败）');
+  log('          提交前先看「高级 OAuth 设置」按钮是否从 disabled 变 enabled ——');
+  log('          没变就说明 OAuth 发现失败（URL 少了 /mcp / 隧道不通 / 服务没起），别提交');
   log('        ⚠️ 连接器必须在「插件」页建；在「设置」里建同样字段的表单会报 Something went wrong');
   log(
-    `     6) 随即跳到 /authorize 授权页 → 填 Owner password${
-      authNeedsWrite ? '（就是上面新生成的那个）' : '（你原有的那个，即 ~/.devspace/auth.json 里的 ownerToken）'
-    }`
+    `     6) 跳 /authorize 后，agent 从 auth.json 就地读取 Owner password 填入${
+      authNeedsWrite ? '（就是上面新生成的那个）' : '（你原有的那个）'
+    } → 点 Authorize DevSpace`
   );
-  log('        ⚠️ 密码只在浏览器页面里填，**绝对不要发到聊天或日志里**');
-  log('     7) 新开一个对话，从工具菜单手动挂上 DevSpace');
+  log('        ⚠️ 绝不 print / 回显 / 当命令行参数传；也绝不要用户把它贴进聊天或日志里');
+  log('');
+  log('  🙋 以下步骤【必须由你亲自完成】：');
+  log('     7) 新开一个对话，从工具菜单手动挂上 DevSpace（没有公开 API）');
+  log('     8) 【首次】允许 Chrome 远程调试：勾选 "Allow remote debugging for this browser instance"');
+  log('        并点 Allow（只需一次；不要在循环里重试，Chrome 每个新连接都会弹新对话框）');
+  log('');
+  log('  若本机没有 browser-harness：第 4–6 步退化为人工作业 —— 把上面那些值自己填进浏览器即可，结果一致。');
+  log('  详见 references/chatgpt-connector.md（含完整自动化步骤与人工兜底路径）。');
   log('');
   log('  若是【首次】启用 Funnel，Tailscale 会另给一个批准链接 —— 也需要你去浏览器点同意。');
   if (!publicBaseUrl) log('  ⚠️ 目前还没拿到公网域名（隧道未起）→ 第 5 步的 URL 先留着，起完隧道再回来填。');

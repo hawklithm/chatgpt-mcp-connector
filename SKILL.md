@@ -1,6 +1,6 @@
 ---
 name: chatgpt-mcp-connector
-description: "从 0 到 1 把本地 MCP 服务器（DevSpace）接入 ChatGPT 网页版：自检并补齐环境依赖（Node/npm/Git/Bash/Tailscale，缺失可自动安装）→ 装 DevSpace → 开 Tailscale Funnel 公网隧道 → 写配置 → 在 ChatGPT 插件页建自定义连接器并完成 OAuth 授权。支持 Windows / macOS / Linux 三平台（各平台的安装命令、路径写法、shell 解析、Tailscale 服务模型差异均已处理，macOS/Linux 未实机验证）。含容错：配置损坏拒绝写盘、自动备份与回滚（.bak/rollback）、原子写入、超时重试、临时隧道降级、错误分级。并明确标出必须由用户人工完成的步骤（Tailscale 浏览器登录、Funnel 首次批准、ChatGPT 建连接器与填 Owner password 授权），脚本检测到未登录/未启用会打 🙋 主动提醒用户操作。也用于诊断 'does not implement OAuth' / 'Something went wrong' / invalid_client / path is outside allowed roots / bash 或 shell 工具持续异常（所有命令都失败、连 echo 也不例外，返回 RuntimeException 或乱码 —— Windows 上通常是 Git 装在非 C 盘、bash 被 System32 里的 WSL 启动器顶掉）/ 配置文件损坏等问题。"
+description: "从 0 到 1 把本地 MCP 服务器（DevSpace）接入 ChatGPT 网页版：自检并补齐环境依赖（Node/npm/Git/Bash/Tailscale，缺失可自动安装）→ 装 DevSpace → 开 Tailscale Funnel 公网隧道 → 写配置 → 在 ChatGPT 插件页建自定义连接器并完成 OAuth 授权。阶段 6（建连接器 + OAuth 授权）默认由 agent 用 browser-harness 驱动浏览器自动完成，无需用户自己填表：含开发者模式开关、插件页表单填写（React 受控输入）、OAuth 发现自检信号、以及从 ~/.devspace/auth.json 就地读取 ownerToken 填入授权页（绝不回显）。支持 Windows / macOS / Linux 三平台（各平台的安装命令、路径写法、shell 解析、Tailscale 服务模型差异均已处理，macOS/Linux 未实机验证）。含容错：配置损坏拒绝写盘、自动备份与回滚（.bak/rollback）、原子写入、超时重试、临时隧道降级、错误分级。仅剩真正不可代劳的步骤需用户动手（UAC 提权、Tailscale 浏览器登录、Funnel 首次批准、首次允许 Chrome 远程调试、ChatGPT 未登录时的登录墙），脚本检测到未登录/未启用会打 🙋 主动提醒用户操作。也用于诊断 'does not implement OAuth' / 'Something went wrong' / invalid_client / path is outside allowed roots / bash 或 shell 工具持续异常（所有命令都失败、连 echo 也不例外，返回 RuntimeException 或乱码 —— Windows 上通常是 Git 装在非 C 盘、bash 被 System32 里的 WSL 启动器顶掉）/ 配置文件损坏等问题。"
 agent_created: true
 ---
 
@@ -19,8 +19,15 @@ Node `24.15.0`，ChatGPT 新版中文 UI + Plus 账号。
 ⚠️ 只有 Windows 做过实机验证；macOS / Linux 的结论来自 DevSpace 源码，**未实机跑过**，
 实机结果与文档不符时以实际输出为准。
 
+**浏览器自动化依赖**：阶段 6（建连接器 + OAuth 授权）默认用 **`browser-harness`** 驱动浏览器完成
+（本机实测 `0.1.8`，命令在 `~/.local/bin/browser-harness`）。
+装不上、或连不上浏览器时阶段 6 **降级为人工作业** —— 把该填的值列清楚交给用户，
+步骤见 `references/chatgpt-connector.md` 的「完整步骤（人工兜底路径）」。两条路径产出的结果完全一致。
+
 ## 何时使用
 
+- **让 agent 自己把连接器配好、不要用户手动填表** —— 阶段 6 默认用 `browser-harness`
+  驱动浏览器完成（开发者模式 → 建连接器 → OAuth 授权）
 - 「让 ChatGPT 网页版驱动本地 codex / 读我本地项目」「把本地 MCP 接到 ChatGPT」
 - 报错 `MCP server ... does not implement OAuth` / `Something went wrong...`
 - **`bash` / shell 工具持续异常**：`git status`、`cargo fmt`、`echo`、`ls` 全部失败，
@@ -44,13 +51,18 @@ Node `24.15.0`，ChatGPT 新版中文 UI + Plus 账号。
 | 3 | 开公网隧道 | `tailscale funnel --bg 7676` | `funnel status` 显示 `proxy http://127.0.0.1:7676` | **🙋 首次需点批准链接** |
 | 4 | 写 DevSpace 配置 | `devspace init`（交互）**或** 脚本 / 直接写配置（全自动） | 启动日志 `allowed roots:` 正确 | — |
 | 5 | 启动服务 | `devspace serve` | `/healthz` 本地+公网都 200 | — |
-| 6 | ChatGPT 建连接器 | `chatgpt.com/plugins` → `创建应用` → OAUTH | 日志出现 `openai-mcp/1.0.0` + `200` | **🙋 全程浏览器操作** |
-| 6b | 授权 | `/authorize` 页填 Owner password | 302 回跳 `chatgpt.com/connector/oauth/...?code=` | **🙋 密码只能人填** |
+| 6 | ChatGPT 建连接器 | **🤖 `browser-harness` 驱动浏览器**：开发者模式 → `创建应用` → 填表 → OAUTH | 日志出现 `openai-mcp/1.0.0` + `200` | 首次需允许 Chrome 远程调试 |
+| 6b | 授权 | **🤖 `browser-harness` 填 Owner password**（agent 从 `auth.json` 直读直填，不经人手） | 302 回跳 `chatgpt.com/connector/oauth/...?code=` | ChatGPT 未登录时才需人工 |
+
+> 阶段 6 的 🤖 只覆盖「不需要登录态之外的东西」的部分。**登录墙（密码 / MFA / 账号选择）一律停下交人。**
+> 完整可执行的自动化步骤（含选择器、React 受控输入写法、坐标点击、OAuth 自检信号）见
+> `references/chatgpt-connector.md` 的「🤖 自动化执行」。
 
 ## 🙋 必须由用户亲自完成的步骤
 
-这条流程**没法全自动跑完**。登录、浏览器授权、后台开关这三类步骤脚本代替不了 ——
-要么需要账号凭据，要么只能在浏览器里点。
+这条流程**绝大部分能自动跑完**：阶段 6 的连接器创建与 OAuth 授权已由
+`browser-harness` 接管（agent 自己操作浏览器，不再要求用户填表）。
+剩下这几处**真正没法代劳** —— 要么需要账号凭据，要么只能在浏览器里由人点一次。
 **碰到下面这些点必须停下来交给用户，不要静默等待、更不要代做。**
 
 | # | 阶段 | 要用户做什么 | 为什么不能自动 | 做完怎么确认 |
@@ -59,10 +71,13 @@ Node `24.15.0`，ChatGPT 新版中文 UI + Plus 账号。
 | 2 | 2 Tailscale | `tailscale up` 打印的**登录链接** → 浏览器打开、登录、授权设备加入 tailnet | 需要账号凭据 + 浏览器会话 | `tailscale status` 出现 Self，IP 为 `100.x` |
 | 3 | 2 Tailscale | 后台没开 **MagicDNS** 时去 admin 后台 DNS 页打开 | 账号级策略开关 | `tailscale status --json` 里有 `Self.DNSName` |
 | 4 | 3 Funnel | **首次**启用 Funnel 会另给**批准链接** → 浏览器点同意 | 账号级 ACL 策略 | `funnel status` 出现 `(Funnel on)` |
-| 5 | 6 ChatGPT | 浏览器登录 ChatGPT → 设置 → 账户安全与登录 → 打开**开发者模式** | 需要登录态 | 设置页开关为开 |
-| 6 | 6 ChatGPT | 在 **`chatgpt.com/plugins`** 点「创建应用」并填表提交 | 浏览器交互（React 表单） | 列表出现 DevSpace，或 URL 变为 `#settings/Connectors?...` |
-| 7 | 6b 授权 | 在 `/authorize` 页填 **Owner password** → 点 `Authorize DevSpace` | 凭据只能由人输入 | 302 回跳 `chatgpt.com/connector/oauth/<id>?code=...` |
-| 8 | 6b | 新开一个对话，从工具菜单**手动挂上** DevSpace | 没有公开 API | 对话里能真的调用工具 |
+| 5 | 6 前置 | **首次**允许 Chrome 远程调试：勾选 "Allow remote debugging for this browser instance" 并点 Allow | 浏览器安全确认，必须人点 | 之后 `browser-harness --doctor` 的 `active browser connections` 不再为 0；**只需一次** |
+| 6 | 6 ChatGPT | **ChatGPT 未登录时**由用户登录（密码 / MFA / 账号选择） | 凭据只能由人输入 | `new_tab("https://chatgpt.com/")` 落到主界面而非登录页 |
+| 7 | 6b | 新开一个对话，从工具菜单**手动挂上** DevSpace | 没有公开 API | 对话里能真的调用工具 |
+
+**已经不再是人工步骤**（曾列在这里、现由 `browser-harness` 自动完成）：
+开开发者模式、在插件页建连接器并提交表单、在 `/authorize` 页填 Owner password 授权。
+
 
 ### 提醒话术（直接照用）
 
@@ -71,11 +86,20 @@ Node `24.15.0`，ChatGPT 新版中文 UI + Plus 账号。
 > 🙋 **需要你操作**：`tailscale up` 已经打印了一个链接，请用浏览器打开并完成登录授权。
 > 完成后跟我说一声，我接着跑 `tailscale status` 确认。
 
-> 🙋 **需要你操作**：请在浏览器打开 `https://chatgpt.com/plugins` → 右上角「创建应用」，
-> 服务器 URL 填 `https://<域名>/mcp`，身份验证保持 `OAUTH`，勾选确认后点「创建」。
+> 🙋 **需要你操作**：你的浏览器刚打开一个调试设置页，请勾选
+> 「Allow remote debugging for this browser instance」并点 Allow —— 我就能自己操作浏览器建连接器了。
+> 这一步**只需要做一次**。
 
-> 🙋 **需要你操作**：页面会跳到授权页，请填 Owner password（在 `~/.devspace/auth.json`）并点授权。
-> **密码只在浏览器里填，不要发到聊天或日志里。**
+> 🙋 **需要你操作**：ChatGPT 当前未登录，请在浏览器里登录后告诉我（密码 / 验证码请自己输入），
+> 我接着自动完成建连接器和授权。
+
+> 阶段 6 的正常话术是**报进展**而不是要人手 —— 例如：
+> 「我正在用 browser-harness 建连接器：开发者模式已开 → 已提交表单 → OAuth 发现成功 → 正在授权……
+> 已建立会话（`openai-mcp/1.0.0`）。只有最后一步要你动手：新开一个对话，从工具菜单挂上 DevSpace。」
+
+**Owner password 不经过人手也不经过聊天**：自动化路径下 agent 从 `~/.devspace/auth.json`
+就地读取并直接填入浏览器表单，**不 print、不回显、不写日志、不作为命令行参数**；
+人工兜底时才引导用户去文件里自己看。
 
 脚本侧会自动提示：`env-check` 与 `devspace-bootstrap check` 检测到 Tailscale 未登录、
 Funnel 未启用这类情况时，会就地打 `🙋` 并在输出末尾汇总一份待办清单。
@@ -185,8 +209,25 @@ cd <默认工作目录> && devspace serve     # 进程必须常驻
 
 ### 阶段 6：ChatGPT 连接器 + 授权 → `references/chatgpt-connector.md`
 
+**默认由 agent 用 `browser-harness` 驱动浏览器完成**（用户不用自己填表）。
+完整可执行步骤见该文件的「🤖 自动化执行」，骨架：
+
+```bash
+browser-harness --doctor                     # ① 确认 chrome running + 连接已建立
+```
+```python
+new_tab("https://chatgpt.com/")                                        # ② 登录墙自检
+new_tab("https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins")   # ③ 新插件弹窗
+# ④ 填 name / 服务器 URL = https://<域名>/mcp / 身份验证 = OAUTH / 勾确认 → 等 ≥6 秒
+# ⑤ 跳 /authorize 后，从 ~/.devspace/auth.json 读 ownerToken 就地填入 → 点 Authorize DevSpace
+```
+
 配置值准备：服务器 URL = `https://<域名>/mcp`，身份验证 = `OAUTH`，
-Owner password = `~/.devspace/auth.json` 里的 `ownerToken`（43 字符明文）。
+Owner password = `~/.devspace/auth.json` 的 `ownerToken`（43 字符明文，实测字段名就是 `ownerToken`）。
+
+**提交前必看的一个信号**：填完 URL 后「高级 OAuth 设置」按钮从 disabled 的
+「输入有效的 MCP 服务器 URL…」变成 enabled 的「查看已发现的 OAuth 设置」—— 这才说明 OAuth 发现成功。
+**没变就别点创建**，否则只会拿到 `Something went wrong`。
 
 验收：服务端日志出现 **`userAgent: openai-mcp/1.0.0` + `200` + `mcp_session_created`**，
 进一步看到 `tool_call ... success:true` 才算真通了。
@@ -197,7 +238,11 @@ Owner password = `~/.devspace/auth.json` 里的 `ownerToken`（43 字符明文�
    且 DevSpace 的 OAuth 路由在 `/mcp` 之外。必须代理整个 origin。
 2. **连接器必须在 `chatgpt.com/plugins` 页建** —— 「设置」里只用来开开发者模式；
    两处表单字段一模一样，走错必报 `Something went wrong`。
-3. **Owner password 只在浏览器授权页填写** —— 永远不要让用户把它贴进聊天或日志。
+   自动化同样守这条：深链接入口用
+   `chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins`。
+3. **Owner password 永不进聊天/日志** —— 人工路径禁止用户贴，
+   自动化路径改由 agent 从 `~/.devspace/auth.json` **就地读、就地填**，
+   不 print、不回显、不作为命令行参数（回读校验只回长度）。
 
 ## 安全边界（必读）
 
@@ -216,7 +261,7 @@ Owner password = `~/.devspace/auth.json` 里的 `ownerToken`（43 字符明文�
 | `references/env-setup.md` | 依赖清单与要求、各平台安装命令、装完之后的环境坑（PATH 刷新 / Windows npm shim / macOS Homebrew shellenv / Linux nvm）、DevSpace 安装与常见问题、CLI 命令面 | 阶段 0–1，或依赖装不上时 |
 | `references/tailscale-funnel.md` | Tailscale 安装/登录（含三平台服务模型）、版本要求、Funnel 前置条件与语法、域名推导、关闭隧道、降级方案 | 阶段 2–3，或隧道不通时 |
 | `references/devspace-config.md` | 两个配置文件、全自动写配置机制、解析优先级、环境变量总表、allowedRoots、启动与健康检查、OAuth 持久化 | 阶段 4–5，或要改配置/查变量时 |
-| `references/chatgpt-connector.md` | 建连接器完整步骤与字段、成功判据、在对话里使用、browser-harness 自动化要点、收尾 | 阶段 6，或连接器报错时 |
+| `references/chatgpt-connector.md` | 阶段 6：**browser-harness 自动化执行全流程**（前置检查、登录墙自检、插件页表单选择器、React 受控输入、坐标点击、OAuth 自检信号、ownerToken 就地填法）、人工兜底步骤、成功判据 | 阶段 6，或连接器报错时 |
 | `references/troubleshooting.md` | 容错设计（五原则/错误分级/阶段恢复表/降级/回滚）、故障速查表、已证伪的伪根因 | **出任何问题时先读这个** |
 
 ## 外部参考
@@ -224,3 +269,5 @@ Owner password = `~/.devspace/auth.json` 里的 `ownerToken`（43 字符明文�
 - DevSpace 官方 README / Setup / Gotchas / Security / Config（仓库路径 `Waishnav/devspace`，`docs/` 下）
 - OpenAI 连接器文档：`developers.openai.com/plugins/deploy/connect-chatgpt`
 - Tailscale Funnel：`tailscale.com/kb/1247/funnel-serve-use-cases`
+- browser-harness（阶段 6 自动化）：仓库路径 `browser-use/browser-harness`，
+  安装与连接排障见其中的 `install.md`；连不上先跑 `browser-harness --doctor`

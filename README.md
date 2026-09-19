@@ -47,7 +47,8 @@ This skill front-loads all of those traps.
 | **Cross-platform** | Install commands, CLI locations, path syntax, shell resolution and the Tailscale service model are all handled for Windows / macOS / Linux; the scripts branch by platform, **no code changes needed** |
 | **Fully automatic config writing** | Does not rely on the interactive `devspace init`; writes `config.json` from arguments and only touches keys you explicitly pass |
 | **Fault tolerance & rollback** | Refuses to write when the config is corrupt and quarantines it as `.corrupt-*`, auto-backs up to `.bak`, atomic replace, timeouts, one-command `rollback` |
-| **🙋 Human-in-the-loop reminders** | Explicitly marks the 8 steps only a human can do (browser login, Funnel approval, entering the Owner password, …) and flags them proactively when it detects an unlogged or unconfigured state |
+| **🤖 Stage 6 browser automation** | The agent drives the browser with `browser-harness` to create the connector and complete OAuth itself — **you never fill in the form**; the ownerToken is read in place and never echoed |
+| **🙋 Human-in-the-loop reminders** | Explicitly marks the 7 steps that genuinely cannot be delegated (UAC elevation, browser login, Funnel approval, allowing Chrome remote debugging once, …) and flags them proactively when it detects an unlogged or unconfigured state |
 | **Troubleshooting** | ~20 rows of common errors, including a "debunked false root cause" section so you do not waste time down the wrong path |
 | **Security boundaries** | Explains that `allowedRoots` is *not* a sandbox, plus the symlink bypass and the `DEVSPACE_ALLOWED_HOSTS=*` risk |
 
@@ -62,7 +63,8 @@ This skill front-loads all of those traps.
 | Bash | Windows: **mandatory** — Git Bash ★ / MSYS2 / Cygwin / WSL / PortableGit<br>macOS / Linux: `/bin/bash` (ships by default) | Windows often has several; picking the wrong one makes DevSpace behave oddly. **On Windows a missing bash is fatal** (no fallback); macOS/Linux degrade to `/bin/sh` |
 | Git | Any recent version | — |
 | Tailscale | `1.102.4` verified | Must be logged in with MagicDNS enabled; on Linux the CLI needs root by default — use `--operator` |
-| ChatGPT | Web UI + paid account with **developer mode** enabled | Required for connectors |
+| ChatGPT | Web UI + paid account with **developer mode** enabled | Required for connectors; the agent flips the developer-mode switch itself |
+| browser-harness | Optional, `0.1.8+` | Lets the agent complete stage 6 (create connector + OAuth) unattended. Without it, stage 6 falls back to manual work with an identical outcome |
 
 > Platform quick reference (install commands / CLI locations / path syntax / common traps):
 > [`references/cross-platform.md`](references/cross-platform.md).
@@ -121,7 +123,9 @@ No restart needed. The next time you mention "connect my local MCP to ChatGPT", 
 
 The block above only *installs*. The one below **installs and then runs the whole pipeline**: paste it
 into any harness (WorkBuddy / Claude Code / Codex / Cursor / …) and it will work through the SKILL.md
-procedure, pausing at every step that requires a human.
+procedure — **including stage 6, creating the connector and completing OAuth**, which the agent does
+itself by driving the browser with `browser-harness`, so you never fill in the form. It pauses only
+where a human is genuinely required.
 
 It can drive an arbitrary harness because the procedure lives in **files** (`SKILL.md` + `references/`).
 The prompt only routes the harness there and gives it a pass criterion and a pause point per stage — it
@@ -168,8 +172,10 @@ Goal: get a local MCP server (DevSpace) running on this machine so the ChatGPT w
 == Execution ==
 
 Work through the stages in order. After each stage, report what you ran, the evidence, and what comes
-next — then continue. Whenever a step is marked 🙋 in SKILL.md, STOP AND ASK ME: those can only be done
-by a human in a browser, and you cannot substitute for that.
+next — then continue. Whenever a step is marked 🙋 in SKILL.md, STOP AND ASK ME: those genuinely
+cannot be done for me (UAC elevation, browser login, Funnel approval, the one-time Chrome
+remote-debugging permission). **Stage 6 is not one of them** — create the connector and complete
+OAuth yourself with browser-harness; do not hand that back to me.
 
 Stage 0  Environment self-check (read-only first)
     node "<SKILL_DIR>/scripts/env-check.mjs"
@@ -226,32 +232,74 @@ Stage 5  Start the server
     failure.
     🙋 Keep it running in the background and tell me how to stop it.
 
-Stage 6  Create the ChatGPT connector and authorize
-    Prepare and state plainly the values I need to enter:
-      Server URL : https://<funnel-domain>/mcp
-      Auth       : OAUTH
-    🙋 PAUSE: I create the connector myself at https://chatgpt.com/plugins
-       It MUST be created on that page — the form under Settings has identical fields but always fails
-       with "Something went wrong. If this issue persists please contact us through our help center."
-    🙋 PAUSE: after it redirects to /authorize, I enter the Owner password myself in the browser.
-       Just tell me to look up the ownerToken field in the auth.json inside the DevSpace config
-       directory.
+Stage 6  Create the connector and complete OAuth — using browser-harness, yourself
+    ⚠️ You drive the browser here. This is NOT "list the values and let me fill them in".
+    Do each step, then report. Re-read page state after every action to confirm it took effect.
+
+    A) Run browser-harness --doctor
+       Confirm "chrome running" and that "active browser connections" is not 0.
+       ("Browser Use cloud auth" showing FAIL is expected — local Chrome does not need the cloud.)
+       If connections is 0, ONLY THEN stop and ask me: I will tick "Allow remote debugging for this
+       browser instance" and click Allow in Chrome. This is a ONE-TIME action.
+       ⚠️ Do not retry in a loop — Chrome pops a fresh dialog for every new connection, so retrying
+       just spams me.
+
+    B) Login-wall check: new_tab("https://chatgpt.com/") + wait_for_load(), then read page_info().
+       If you land on a login page, stop and tell me. NEVER fill in passwords, one-time codes or MFA.
+
+    C) Enable developer mode (one-time): Settings -> Account security and login -> Developer mode.
+       Read the toggle back afterwards to confirm.
+
+    D) Create the connector. Use the deep link straight into the new-plugin dialog — do not hunt for
+       the button on the list page:
+         https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins
+       Fill: name DevSpace / connection type "Server URL" / URL = https://<funnel-domain>/mcp
+             / auth OAUTH / tick the acknowledgement checkbox (without it "Create" stays disabled).
+       🔎 BEFORE submitting, self-check: does the "Advanced OAuth settings" button flip from the
+          disabled "Enter a valid MCP server URL to view discovered OAuth settings" to an enabled
+          "View discovered OAuth settings"? If it did not flip, OAuth discovery FAILED (URL missing
+          /mcp, tunnel down, server not running) — do NOT submit.
+       After clicking "Create", wait ≥6 seconds before judging: submission is async and the dialog
+       closes a moment later, so judging too early looks like a failure.
+
+    E) The page redirects to https://<funnel-domain>/authorize?... (note: the host changes from
+       chatgpt.com to your funnel domain). Read ownerToken from ~/.devspace/auth.json
+       (Windows: %USERPROFILE%\.devspace\auth.json) and fill it into the password field in place,
+       then click Authorize DevSpace.
+       🔐 Never print, echo or log it; never pass it as a command-line argument (that leaks it into
+          shell history and the process list); when reading it back for verification, return only the
+          length (43).
+
     Pass: the DevSpace server log shows userAgent: openai-mcp/1.0.0 with a 200 response, plus an
           mcp_session_created line.
-    Finally, open a new conversation and attach DevSpace from the tools menu — that is the real proof
-    it works.
+    🙋 Last step is mine: open a new conversation and attach DevSpace from the tools menu — there is
+       no public API for that.
+
+    Two general traps: every browser-harness call resets the current tab, so re-select the tab at the
+    top of each script; and the authorize flow navigates the tab from chatgpt.com to the funnel
+    domain, so never hard-code chatgpt.com in your tab matcher.
+    Always click via coordinates (click_at_xy), never JS .click() — JS clicks routinely fail on
+    ChatGPT's React buttons.
 
 == Rules ==
 
 - Do not run any installer without my explicit approval for that specific command.
-- Never print, echo, or ask me to paste the Owner password into the chat. Only tell me where it lives.
+- Stage 6 MUST be done by you driving the browser with browser-harness. Do not hand me a list of
+  values to type. Stop for me only in two cases: (1) a login wall (password / code / MFA / account
+  choice), (2) the one-time Chrome remote-debugging permission.
+- The Owner password never enters the chat or any log: read it from ~/.devspace/auth.json and fill
+  it in place. Do not print it, echo it, or pass it as a CLI argument. Only on the manual fallback
+  path (no browser-harness available) do you just tell me where the file is.
 - Never use tailscale funnel --set-path; always proxy the whole port.
-- If any step fails, read <SKILL_DIR>/references/troubleshooting.md before improvising.
+- If any step fails, read <SKILL_DIR>/references/troubleshooting.md before improvising. For browser
+  steps, run `browser-harness --doctor` first.
 - If your environment contradicts an assumption in the docs (version, path, shell), say so instead of
   guessing.
 - Decide whether a dependency is usable by running its command and reading the output
   (`--version` / `where` / `which`). Do not conclude anything from "the file exists" — "the file is
   there but will not run" is a real and common case.
+- After any browser action, read the state back (`js(...)` or `page_info()`). Never assume
+  "I clicked it" means "it took effect".
 
 Start with Stage 0 now.
 ```
@@ -269,8 +317,14 @@ Start with Stage 0 now.
 | 4 | Writing straight to disk, or invoking the interactive `devspace init` and hanging | `--dry-run` diff is mandatory first |
 | 5 | Misreading the public `/mcp` 401 as a failure and "fixing" the server | States plainly that 401 is correct |
 | 5 | On Windows, running `devspace serve` directly when Git is not under `%ProgramFiles%\Git` — the shell tool is then dead | Gives the exact one-liner that prepends Git's `bin` to PATH before starting |
-| 6 | Creating the connector under Settings → `Something went wrong` | Points at the `plugins` page |
-| 6 | Getting the user to paste the Owner password into the chat | Forbidden; the agent tells you the file location instead |
+| 6 | Creating the connector under Settings → `Something went wrong` | Points at the `plugins` page and gives the deep link |
+| 6 | Treating this stage as "human-only" and handing the user a list of values to type (when the agent could just do it) | Mandates driving the browser with `browser-harness`; stops only for a login wall or the one-time remote-debugging permission |
+| 6 | Clicking "Create" and only then discovering OAuth discovery failed → `Something went wrong` again | Requires checking that the "Advanced OAuth settings" button flipped to enabled before submitting |
+| 6 | Judging the result immediately after clicking "Create" (submission is async and the dialog closes a moment later) | Requires waiting ≥6 seconds before judging |
+| 6 | Each `browser-harness` call resets the tab → the agent acts on the wrong tab | Says to re-select the tab per script, and not to hard-code `chatgpt.com` in the matcher (the authorize flow changes host) |
+| 6 | Using JS `.click()` on React buttons → nothing happens | Requires coordinate clicks via `click_at_xy` |
+| 6 | Retrying the connection in a loop → Chrome keeps popping permission dialogs at the user | Says explicitly: once only, do not retry in a loop |
+| 6b | Getting the user to paste the Owner password into the chat | The agent reads it from `auth.json` in place; no printing, no CLI argument, verification returns only the length |
 
 ---
 
@@ -279,7 +333,8 @@ Start with Stage 0 now.
 Once installed, a single sentence to your agent is enough:
 
 ```text
-Connect my local MCP to ChatGPT, using D:\projects\my-app as the accessible directory.
+Connect my local MCP to ChatGPT, using D:\projects\my-app as the accessible directory — and create
+the connector and finish the OAuth authorization for me too.
 ```
 
 It then walks the flow below, stopping to remind you wherever your own action is required:
@@ -291,12 +346,16 @@ flowchart LR
     S2 --> S3["Stage 3<br/>Open Funnel<br/>public tunnel"]
     S3 --> S4["Stage 4<br/>Write DevSpace<br/>config"]
     S4 --> S5["Stage 5<br/>Start<br/>devspace serve"]
-    S5 --> S6["Stage 6<br/>Create ChatGPT<br/>connector + OAuth"]
+    S5 --> S6["Stage 6 🤖<br/>browser-harness drives<br/>connector + OAuth"]
 
     S2 -.->|🙋 browser login| U1((you))
     S3 -.->|🙋 approve Funnel| U1
-    S6 -.->|🙋 Owner password| U1
+    S6 -.->|🙋 allow Chrome remote debugging (once)| U1
+    S6 -.->|🙋 login wall / attach the tool| U1
 ```
+
+> Stage 6 is **automated**: the agent operates the browser, fills the form and enters the Owner
+> password itself. You no longer create the connector by hand. Only the two 🙋 edges above interrupt you.
 
 ### Pass criteria per stage
 
@@ -308,7 +367,7 @@ flowchart LR
 | 3 Tunnel | `tailscale funnel --bg 7676` | `funnel status` shows `(Funnel on)` |
 | 4 Config | `devspace-bootstrap.mjs apply --roots ...` | Serve log's `allowed roots:` is as expected |
 | 5 Serve | `devspace serve` | `/healthz` returns 200 locally **and** publicly |
-| 6 Connector | `chatgpt.com/plugins` → create app | Log shows `openai-mcp/1.0.0` + `200` |
+| 6 Connector | 🤖 `browser-harness` drives the browser (agent-run) | Log shows `openai-mcp/1.0.0` + `200` |
 
 > One easy misread at stage 5: a public `/mcp` returning **401 is correct** — that is the OAuth entry
 > point, not a fault.
@@ -325,7 +384,7 @@ chatgpt-mcp-connector/
 │   ├── env-setup.md                # Stages 0–1: dependency list, per-OS install, env pitfalls
 │   ├── tailscale-funnel.md         # Stages 2–3: login, Funnel prerequisites & syntax, domain derivation
 │   ├── devspace-config.md          # Stages 4–5: config files, env var table, OAuth persistence
-│   ├── chatgpt-connector.md        # Stage 6: connector steps, browser automation notes
+│   ├── chatgpt-connector.md        # Stage 6: browser-harness automation, manual fallback
 │   └── troubleshooting.md          # Fault-tolerance design, error lookup, debunked root causes
 ├── scripts/
 │   ├── env-check.mjs               # Environment self-check + auto-install of what is missing
@@ -427,8 +486,9 @@ On macOS / Linux pass forward-slash roots instead (e.g. `/home/you/projects/my-a
    Settings is only for enabling developer mode. The two forms have identical fields, and taking the
    wrong one always yields `Something went wrong`.
 
-3. **Enter the Owner password only in the browser authorization page**
-   Never have the user paste it into chat or logs.
+3. **Enter the Owner password only in the browser authorization page, and never in chat or logs**
+   On the manual path, never have the user paste it into chat. On the automated path the agent reads
+   it from `auth.json` in place and fills the form directly — no printing, no echo, no CLI argument.
 
 ---
 

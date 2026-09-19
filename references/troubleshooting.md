@@ -23,7 +23,7 @@ Windows 上 `~` 不展开；示例里的 `$SK` 换成 `%SK%`（cmd）或 `"$SK"`
 | **改前先备份** | 动文件前先留退路 | `apply` 自动写 `<文件>.bak`；`rollback` 可整文件回退 |
 | **不留半成品** | 所有校验在写盘**之前**完成，失败就在写盘前退出 | URL 形态、`/mcp` 后缀、JSON 可解析性都先验完再落盘 |
 | **坏了要能自证** | 给出「谁坏了、证据在哪、下一步做什么」 | 损坏配置另存 `.corrupt-<时间戳>`；先用 `doctor`/`check` 定位 |
-| **该停就停** | 需要人登录/授权/点后台开关的步骤，明确交给用户 —— 不静默等待，也不代做 | 见 SKILL.md「🙋 需要用户亲自做的步骤」；脚本检测到未登录会打 🙋 并在末尾汇总 |
+| **该停就停** | 需要人登录/授权/点后台开关的步骤，明确交给用户 —— 不静默等待，也不代做。但**阶段 6 不是**：建连接器与 OAuth 授权由 agent 用 browser-harness 自动完成 | 见 SKILL.md「🙋 必须由用户亲自完成的步骤」；脚本检测到未登录会打 🙋 并在末尾汇总 |
 
 ### 错误分级：先判断该不该救
 
@@ -81,7 +81,12 @@ tailscale funnel reset                              # 关掉公网入口
 | --- | --- | --- |
 | `tailscale up` 一直挂着 / 反复跑也登录不上 | 它在等用户去浏览器点授权链接 | **🙋 让用户打开那个链接完成登录**，别反复重跑命令 |
 | `tailscale status` 没有 Self | 还没登录，或 Tailscale 服务没运行 | 🙋 让用户 `tailscale up`；「服务没起」按平台看：Windows 托盘图标、macOS 菜单栏 App、Linux `sudo systemctl start tailscaled` |
-| `Something went wrong...` | **① 在「设置」里建连接器（入口错）** ② 隧道没起/域名变了 ③ 提交后没等够 6 秒 | 改用 `chatgpt.com/plugins` → 右上角 `创建应用` |
+| `Something went wrong...` | **① 在「设置」里建连接器（入口错）** ② 隧道没起/域名变了 ③ 提交后没等够 6 秒 | 改用 `chatgpt.com/plugins` → 右上角 `创建应用`；或直接用深链接 `chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins` |
+| **阶段 6 自动化**：`browser-harness --doctor` 报 `daemon alive` / `active browser connections` FAIL | Chrome 没开远程调试（首次必经） | harness 会打开 `chrome://inspect/#remote-debugging` → 🙋 请用户勾选 "Allow remote debugging for this browser instance" 并点 Allow。**只需一次**；⚠️ **不要在循环里重试**，Chrome 每个新连接都弹一个新对话框 |
+| **阶段 6 自动化**：操作到错误的标签页 / 点击没落在目标上 | 每次 `browser-harness` 调用都会重置当前标签页 | 每个脚本开头用 `list_tabs()` + `switch_tab()` 重选；⚠️ 授权流程会把域名从 `chatgpt.com` 变成**隧道域名**，匹配条件别写死 `chatgpt.com` |
+| **阶段 6 自动化**：点了按钮没反应 | 用了 JS `.click()`，对 ChatGPT 的 React 按钮经常无效 | 改用坐标 `click_at_xy()`；坐标从 DOM 枚举（`js(...)` 扫 `button,a,[role=button]` 拿 `getBoundingClientRect`）取。`y > ph` 时先 `scrollIntoView({block:'center'})` 再量 |
+| **阶段 6 自动化**：表单看着填了，提交时值是空的 | React 受控输入：直接 `el.value = v` 不会更新组件内部状态 | 用原生 setter + 派发 `input`/`change` 事件，代码见 `references/chatgpt-connector.md` D 步 |
+| **阶段 6 自动化**：日志里冒出登录页 / 一直停在登录页 | 撞上登录墙 | **停下来让用户登录**（密码 / 验证码 / MFA / 账号选择一律不得代填）；Chrome 已登录时可直接走 SSO |
 | `does not implement OAuth` | ① 连接器是隧道配好之前建的（ChatGPT 侧缓存了失败预检）② 隧道没起 | 删掉重建；先跑通 `/healthz` |
 | 服务端日志**完全没有** ChatGPT 的请求 | UI/入口/缓存问题，请求没发出来 | 查 UI 路径，**别在服务端瞎改** |
 | `invalid_client` | 1.0.8 上不该出现；出现说明 SQLite 里没有这个 client | 查 `oauth_clients` 表；重建连接器 |

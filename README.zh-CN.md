@@ -38,7 +38,8 @@
 | **跨平台** | Windows / macOS / Linux 三平台的安装命令、CLI 位置、路径写法、shell 解析、Tailscale 服务模型差异全部处理；脚本按平台分支，**无需改代码** |
 | **配置全自动写入** | 不依赖交互式 `devspace init`，直接按参数写 `config.json`，只改显式传入的键 |
 | **容错与回滚** | 配置损坏**拒绝写盘**并另存 `.corrupt-*`、写前自动 `.bak` 备份、原子替换、超时重试、`rollback` 一键恢复 |
-| **🙋 人工介入点提醒** | 明确标出必须由用户亲自完成的 8 个步骤（浏览器登录、Funnel 批准、填 Owner password 等），检测到未登录/未启用会主动打提醒 |
+| **🤖 阶段 6 浏览器自动化** | 建连接器 + OAuth 授权由 agent 用 `browser-harness` 驱动浏览器自己完成，**用户不用手动填表**；ownerToken 就地读取填入，绝不回显 |
+| **🙋 人工介入点提醒** | 明确标出**真正不可代劳**的 7 个步骤（UAC 提权、浏览器登录、Funnel 批准、首次允许 Chrome 远程调试等），检测到未登录/未启用会主动打提醒 |
 | **故障速查** | 约 20 条常见报错的排查表，含「已证伪的伪根因」，避免在错误方向上浪费时间 |
 | **安全边界说明** | 讲清 `allowedRoots` 不是沙箱、symlink 绕过、`DEVSPACE_ALLOWED_HOSTS=*` 的风险 |
 
@@ -53,7 +54,8 @@
 | Bash | Windows：**必须** Git Bash ★ / MSYS2 / Cygwin / WSL / PortableGit<br>macOS / Linux：`/bin/bash`（一般自带） | Windows 上常并存多个，选错会导致 DevSpace 行为异常；**Windows 缺 bash 直接失败**（无兜底），macOS/Linux 会退化 `/bin/sh` |
 | Git | 任意近期版本 | — |
 | Tailscale | `1.102.4` 实测可用 | 需登录且开启 MagicDNS；Linux 上 CLI 默认要 root，建议 `--operator` |
-| ChatGPT | 网页版 + 付费账号，需开启**开发者模式** | 连接器功能需要 |
+| ChatGPT | 网页版 + 付费账号，需开启**开发者模式** | 连接器功能需要；开发者模式这一步由 agent 自动开 |
+| browser-harness | 可选，`0.1.8+` | 让 agent 自动完成阶段 6（建连接器 + OAuth 授权）。没装则阶段 6 退化为人工作业，结果一致 |
 
 > 平台差异速查（安装命令 / CLI 位置 / 路径写法 / 常见坑）见 [`references/cross-platform.md`](references/cross-platform.md)。
 
@@ -109,7 +111,9 @@ python <skill-creator>/scripts/quick_validate.py ~/.workbuddy/skills/chatgpt-mcp
 ## 一键 prompt：让 Agent 装好并跑通全流程
 
 上面那段只负责**装**。下面这段是**装完直接开跑**：把它整段粘给任意 harness（WorkBuddy / Claude Code /
-Codex / Cursor …），它就会按 SKILL.md 的流程一路把配置做完，并在每个必须由人操作的环节停下来等你。
+Codex / Cursor …），它就会按 SKILL.md 的流程一路把配置做完 ——
+**包括阶段 6 的连接器创建与 OAuth 授权**（由 agent 用 `browser-harness` 自己操作浏览器完成，
+你不用手动填表），只在**真正不可代劳**的环节停下来等你。
 
 它之所以能驱动任意 harness，是因为流程写在 **文件里**（`SKILL.md` + `references/`），
 prompt 只负责把 harness 引到那儿、并逐阶段给出验收信号与暂停点，不依赖某个 harness 的私有能力。
@@ -151,7 +155,9 @@ prompt 只负责把 harness 引到那儿、并逐阶段给出验收信号与暂�
 == 执行 ==
 
 按阶段顺序推进。每完成一个阶段，先汇报「你执行了什么 / 证据是什么 / 下一步做什么」，再继续。
-凡是 SKILL.md 里标了 🙋 的步骤，**停下来问我** —— 那些只能在浏览器里由人完成，你代替不了。
+凡是 SKILL.md 里标了 🙋 的步骤，**停下来问我** —— 那些确实没法代劳
+（UAC 提权、浏览器登录、Funnel 批准、首次允许 Chrome 远程调试）。
+**注意阶段 6 不在其中**：建连接器与 OAuth 授权由你自己用 browser-harness 完成，不要推给我。
 
 阶段 0  环境自检（先只读）
     node "<SKILL_DIR>/scripts/env-check.mjs"
@@ -199,28 +205,60 @@ prompt 只负责把 harness 引到那儿、并逐阶段给出验收信号与暂�
     注意：https://<隧道域名>/mcp 返回 **401 是正确的**，那是 OAuth 的触发点，不是故障。
     🙋 让它在后台常驻，并告诉我怎么停掉它。
 
-阶段 6  在 ChatGPT 建连接器并授权
-    先把我要填的值准备好、明确列出来：
-      服务器 URL : https://<隧道域名>/mcp
-      身份验证   : OAUTH
-    🙋 暂停：由我自己在 https://chatgpt.com/plugins 点「创建应用」并提交。
-       必须在这个页面建 —— 「设置」里那个表单字段一模一样，但走错一定报
-       "Something went wrong"。
-    🙋 暂停：跳转到 /authorize 后，由我自己在浏览器里填 Owner password。
-       你只告诉我「去 DevSpace 配置目录下的 auth.json 里看 ownerToken 字段」。
-    通过标准：DevSpace 服务端日志出现 userAgent: openai-mcp/1.0.0 + 200，
-              以及一行 mcp_session_created。
-    最后再新开一个对话，从工具菜单手动挂上 DevSpace，才算真通。
+阶段 6  用 browser-harness 自动建连接器并完成 OAuth 授权
+    ⚠️ 这一步是「你自己操作浏览器」，不是「把该填的值列给我、让我自己填」。
+    逐个环节先做、再汇报，每步都用一次回读确认操作真的生效了：
+
+    A) browser-harness --doctor
+       确认 chrome running、且 active browser connections 不为 0。
+       （Browser Use cloud auth 报 FAIL 是正常的，本地 Chrome 用不到云端。）
+       若连接为 0 → **这时才停下来找我**：我会在 Chrome 里勾选
+       "Allow remote debugging for this browser instance" 并点 Allow。**只需一次**。
+       ⚠️ 不要在循环里重试 —— Chrome 每个新连接都弹一个新对话框，重试等于反复骚扰我。
+
+    B) 登录墙自检：new_tab("https://chatgpt.com/") + wait_for_load()，看 page_info()。
+       落到登录页就停下来告诉我，**密码 / 验证码 / MFA 一律不要代填**。
+
+    C) 开开发者模式（只需一次）：设置 → 账户安全与登录 → 开发者模式。开完回读开关状态。
+
+    D) 建连接器。用深链接直达新插件弹窗，别去列表页找按钮：
+       https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins
+       填：名称 DevSpace / 连接方式「服务器 URL」/ URL = https://<隧道域名>/mcp
+          / 身份验证 OAUTH / 勾选确认框（不勾「创建」永远 disabled）。
+       🔎 提交前先自检：「高级 OAuth 设置」按钮是否从 disabled 的
+          「输入有效的 MCP 服务器 URL…」变成 enabled 的「查看已发现的 OAuth 设置」——
+          **没变就说明 OAuth 发现失败（URL 少了 /mcp、隧道不通、服务没起），别提交。**
+       点「创建」后**等 ≥6 秒**再判定（提交是异步的，等不够会误判成失败）。
+
+    E) 页面会跳到 https://<隧道域名>/authorize?...（**域名从 chatgpt.com 变成隧道域名**）。
+       你自己从 ~/.devspace/auth.json 读 ownerToken（Windows: %USERPROFILE%\.devspace\auth.json），
+       就地填进密码框，再点 Authorize DevSpace。
+       🔐 绝不 print / 回显 / 写日志；绝不当命令行参数传（会进 shell 历史与进程列表）；
+          回读校验只回长度（43）。
+
+    通过标准：DevSpace 服务端日志出现 userAgent: openai-mcp/1.0.0 + 200 + mcp_session_created。
+    🙋 最后一步要我做：新开一个对话，从工具菜单手动挂上 DevSpace（这步没有公开 API）。
+
+    两个通用坑：每次 browser-harness 调用会重置当前标签页 —— 每个脚本开头重新选标签；
+    授权流程会把标签页从 chatgpt.com 导航到隧道域名，所以匹配条件不能写死 chatgpt.com。
+    点击一律用坐标 click_at_xy，不要用 JS .click()（对 ChatGPT 的 React 按钮经常无效）。
 
 == 规则 ==
 
 - 没有我针对某条命令的明确同意，不要执行任何安装。
-- 绝不打印、回显、或要求我把 Owner password 贴进聊天；只告诉我它在哪里。
+- 阶段 6 **必须用 browser-harness 自己操作浏览器完成**，不要把该填的值列出来让我手动填。
+  只有两种情况停下来找我：① 登录墙（密码 / 验证码 / MFA / 账号选择）；
+  ② 首次允许 Chrome 远程调试。
+- Owner password 永不进聊天、不进日志：你自己从 `~/.devspace/auth.json` 就地读、就地填；
+  不 print、不回显、不作为命令行参数。只有在没有 browser-harness 的人工兜底路径下，
+  才告诉我「去那个文件里自己看」。
 - 绝不使用 tailscale funnel --set-path；始终代理整个端口。
-- 任何一步失败，先读 <SKILL_DIR>/references/troubleshooting.md，不要自己乱试。
+- 任何一步失败，先读 <SKILL_DIR>/references/troubleshooting.md，不要自己乱试；
+  浏览器环节失败先跑 `browser-harness --doctor`。
 - 如果你的环境与文档里的前提不符（版本、路径、shell），直接说出来，不要猜。
 - 判断依赖是否可用，一律跑它的命令看输出（`--version` / `where` / `which`）；
   不要因为「文件存在」就下结论，「文件在但跑不起来」是真实且常见的情况。
+- 任何浏览器操作后都要**回读确认**（`js(...)` 或 `page_info()`），不要假设「点到了 = 生效了」。
 
 现在从阶段 0 开始。
 ```
@@ -238,8 +276,14 @@ prompt 只负责把 harness 引到那儿、并逐阶段给出验收信号与暂�
 | 4 | 直接落盘，或调用交互式 `devspace init` 卡住 | 强制先 `--dry-run` 给 diff |
 | 5 | 把公网 `/mcp` 的 401 误判成故障，回头去改服务端 | 写明「401 是正确的」 |
 | 5 | Windows 上 Git 不在 `%ProgramFiles%\Git` 时直接 `devspace serve`，shell 工具全废 | 给出「先把 Git 的 bin 前置到 PATH 再启动」的具体一行命令 |
-| 6 | 在「设置」里建连接器 → `Something went wrong` | 指明必须在 `plugins` 页 |
-| 6 | 让用户把 Owner password 贴进聊天 | 明确禁止，改为「告诉你文件位置」 |
+| 6 | 在「设置」里建连接器 → `Something went wrong` | 指明必须在 `plugins` 页，并给出深链接入口 |
+| 6 | 把这步当成「只能人工」的活，把值列出来让用户自己填（其实 agent 完全能自己干） | 明确要求用 `browser-harness` 自己操作浏览器，只有登录墙和首次远程调试才停下 |
+| 6 | 直接点「创建」才发现 OAuth 发现失败 → 又是 `Something went wrong` | 要求先自检「高级 OAuth 设置」按钮文案是否变 enabled 再提交 |
+| 6 | 点完「创建」立刻判定结果（提交是异步的，弹窗稍后才关） | 要求等 ≥6 秒再判定 |
+| 6 | 每次 `browser-harness` 调用重置标签页 → 误操作成别的标签 | 写明每个脚本开头重选标签，且匹配条件不能写死 `chatgpt.com`（授权流程域名会变） |
+| 6 | 用 JS `.click()` 点 React 按钮 → 毫无反应 | 要求一律用坐标 `click_at_xy` |
+| 6 | 连接失败就在循环里反复重试 → Chrome 反复弹对话框骚扰用户 | 写明「只需一次、不要在循环里重试」 |
+| 6b | 让用户把 Owner password 贴进聊天 | 改为 agent 从 `auth.json` 就地读取直填；不 print、不当命令行参数、回读只回长度 |
 
 ---
 
@@ -248,7 +292,7 @@ prompt 只负责把 harness 引到那儿、并逐阶段给出验收信号与暂�
 装好之后，直接对 Agent 说一句也行：
 
 ```text
-帮我把本地 MCP 接入 ChatGPT，可访问目录用 D:\projects\my-app
+帮我把本地 MCP 接入 ChatGPT，可访问目录用 D:\projects\my-app，连接器也你帮我建好、授权也你做完。
 ```
 
 它会按下面的流程走，并在需要你亲自操作的地方停下来提醒你：
@@ -260,12 +304,16 @@ flowchart LR
     S2 --> S3["阶段 3<br/>开 Funnel 公网隧道"]
     S3 --> S4["阶段 4<br/>写 DevSpace 配置"]
     S4 --> S5["阶段 5<br/>启动 devspace serve"]
-    S5 --> S6["阶段 6<br/>ChatGPT 建连接器<br/>+ OAuth 授权"]
+    S5 --> S6["阶段 6 🤖<br/>browser-harness 驱动<br/>建连接器 + OAuth 授权"]
 
     S2 -.->|🙋 浏览器登录| U1((你))
     S3 -.->|🙋 批准 Funnel| U1
-    S6 -.->|🙋 填 Owner password| U1
+    S6 -.->|🙋 首次允许 Chrome 远程调试（一次性）| U1
+    S6 -.->|🙋 登录墙 / 最后挂载工具| U1
 ```
+
+> 阶段 6 是**自动化**的：agent 自己操作浏览器填表、自己填 Owner password，
+> 不再需要你手动创建连接器。只有上图中标 🙋 的两处会打断你。
 
 ### 各阶段验收信号
 
@@ -277,7 +325,7 @@ flowchart LR
 | 3 隧道 | `tailscale funnel --bg 7676` | `funnel status` 出现 `(Funnel on)` |
 | 4 配置 | `devspace-bootstrap.mjs apply --roots ...` | 启动日志 `allowed roots:` 符合预期 |
 | 5 启动 | `devspace serve` | `/healthz` 本地与公网均 200 |
-| 6 连接器 | `chatgpt.com/plugins` → 创建应用 | 日志出现 `openai-mcp/1.0.0` + `200` |
+| 6 连接器 | 🤖 `browser-harness` 驱动浏览器（agent 自动执行） | 日志出现 `openai-mcp/1.0.0` + `200` |
 
 > 阶段 5 有个容易误判的点：公网 `/mcp` 返回 **401 是正确的**，那是 OAuth 的触发点，不是故障。
 
@@ -293,7 +341,7 @@ chatgpt-mcp-connector/
 │   ├── env-setup.md                # 阶段 0–1：依赖清单、各平台安装、装完之后的环境坑
 │   ├── tailscale-funnel.md         # 阶段 2–3：登录、Funnel 前置条件与语法、域名推导
 │   ├── devspace-config.md          # 阶段 4–5：两个配置文件、环境变量总表、OAuth 持久化
-│   ├── chatgpt-connector.md        # 阶段 6：建连接器步骤、浏览器自动化要点
+│   ├── chatgpt-connector.md        # 阶段 6：browser-harness 自动化全流程、人工兜底步骤
 │   └── troubleshooting.md          # 容错设计、故障速查表、已证伪的伪根因
 ├── scripts/
 │   ├── env-check.mjs               # 环境自检 + 缺失自动补齐
@@ -387,8 +435,9 @@ macOS / Linux 把 `--roots` 换成正斜杠路径（如 `/home/you/projects/my-a
 2. **连接器必须在 `chatgpt.com/plugins` 页创建**
    「设置」里只用来开开发者模式。两处表单字段一模一样，走错必报 `Something went wrong`。
 
-3. **Owner password 只在浏览器授权页填写**
-   永远不要让用户把它贴进聊天或日志。
+3. **Owner password 只在浏览器授权页填写，且永不进聊天/日志**
+   人工路径下永远不要让用户把它贴进聊天；自动化路径下由 agent 从 `auth.json`
+   就地读取、就地填入表单 —— 不 print、不回显、不作为命令行参数。
 
 ---
 
