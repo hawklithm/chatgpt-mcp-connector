@@ -151,6 +151,46 @@ node $SK/devspace-bootstrap.mjs apply --roots "D:\projects\my-app"            # 
 > **大小写敏感性按平台不同**：Windows 与 macOS 的文件系统不敏感（`~/Projects` 与 `~/projects` 同一个），
 > Linux 敏感（是**两个不同目录**）。脚本的去重逻辑已按平台处理，别手动去重时按小写合并。
 
+### ⚠️ 两个会让人误判「白名单配错了」的坑
+
+**① WSL 的 `/mnt/c/...` 路径永远不通（在 Windows 上）**
+
+DevSpace 是 **Windows 进程**，它眼里的 `/mnt/f/projectL` 不是「F 盘」——
+`path.resolve('/mnt/f/projectL')` 在 Windows 上把开头的 `/` 当成**当前盘**的根，得到 `C:\mnt\f\projectL`。
+于是报错 `Path is outside allowed roots: /mnt/f/projectL`（报错回显的是**原始输入**，不是解析结果，容易误导）。
+
+| 你给的路径 | Windows 上解析成 | 结果 |
+| --- | --- | --- |
+| `/mnt/f/projectL` | `C:\mnt\f\projectL` | ❌ 拒绝 |
+| `/mnt/f/chatgpt_work/projectL` | `C:\mnt\f\chatgpt_work\projectL` | ❌ 拒绝（连白名单里的那个也拒） |
+| `F:\chatgpt_work\projectL` | `F:\chatgpt_work\projectL` | ✅ 通过 |
+
+**结论：交给 ChatGPT / DevSpace 的路径必须是本机原生写法**（Windows 用 `F:\...`，macOS/Linux 用 `/home/...`）。
+`/mnt/...` 只在 WSL 内部有意义，跨到 Windows 进程就必然失败。
+这个路径通常是从 WSL 里的 `pwd -P` / `realpath` / `git rev-parse --show-toplevel` 抄出来的 ——
+**取路径要在 PowerShell / cmd 里取**，别在 WSL 里取。
+
+**② 白名单检查不解析 junction / symlink（issue #45）→ 两道反直觉**
+
+`isPathInsideRoot()` 只做 `path.resolve()` 的**纯字符串比较，不调 realpath**（`dist/roots.js`）。
+于是：
+
+- **junction 放在白名单里 = 白名单被绕过**：`F:\chatgpt_work\projectL` 若是指向 `F:\projectL` 的 junction，
+  逻辑路径看起来在根内 → **通过**，但实际读写的是根**外**的 `F:\projectL`。
+- **把 junction 解析后的真实路径交上去 = 被拒**：`F:\projectL` 不在白名单里 → 拒绝。
+
+排查时先跑一句 `realpath` 看目标落在哪，别只看 `config.json`：
+
+```bash
+# Windows（PowerShell）
+(Get-Item 'F:\chatgpt_work\projectL').Target      # 是 junction 时显示目标
+# 跨平台（Node）
+node -e "console.log(require('fs').realpathSync.native('F:\\chatgpt_work\\projectL'))"
+```
+
+想要真实约束，就把**真实路径**写进白名单（`--roots "F:\projectL,D:\workspace\lunhuiwendao"`），
+或者干脆不用 junction、把项目实体放进白名单目录里。
+
 ### ⚠️ Git Bash 会把 `D:\x` 改写成 `D:/x`
 
 MSYS / Git Bash 的参数路径转换会动 `\`。`D:\projects\my-app` 传给脚本后可能变成 `D:/projects/my-app`。

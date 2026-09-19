@@ -93,6 +93,8 @@ tailscale funnel reset                              # 关掉公网入口
 | 公网 `/mcp` 返回 **404** 而不是 401 | 用了 `--set-path=/mcp`，路径被剥掉了 | 重跑 `tailscale funnel --bg <port>`（代理整个端口） |
 | 公网 `/healthz` 失败、本地成功 | 隧道/DNS/证书问题；Tailscale 版本过老 | 升级 Tailscale，重跑 funnel，`funnel status` 逐层查 |
 | `Path is outside allowed roots` | 传的路径不在白名单内。**Linux 上还要注意大小写**（`~/Projects` 与 `~/projects` 是两个不同目录） | 见 `references/devspace-config.md`「换可访问目录」 |
+| `Path is outside allowed roots: /mnt/f/xxx`（报错里带 `/mnt/`） | **给了 WSL 路径**。DevSpace 是 Windows 进程，`path.resolve('/mnt/f/xxx')` 把开头的 `/` 当成**当前盘**的根 → `C:\mnt\f\xxx` → 必然不在白名单里。⚠️ 报错回显的是**原始输入**，不是解析结果，别被误导成「白名单没配 F 盘」 | 改成本机原生写法 `F:\xxx`。这类路径通常抄自 WSL 的 `pwd -P` / `realpath` / `git rev-parse --show-toplevel` —— **取路径去 PowerShell / cmd 里取** |
+| `Path is outside allowed roots`，但路径**看起来明明**在白名单目录下 | 那个目录是 **junction / symlink**，真实目标在白名单之外。`isPathInsideRoot()` 只做字符串比较、**不解析链接**（issue #45），所以「逻辑路径在根内」能过，「真实路径在根外」被拒 | `realpath` 看一眼目标，把**真实路径**也加进 `allowedRoots`（或不用 junction，把项目实体放进白名单目录） |
 | 隧道域名变了 | 临时隧道每次换 URL | `devspace config set publicBaseUrl <新origin>` 或用 `DEVSPACE_PUBLIC_BASE_URL`，然后重启 + 在插件页 Refresh |
 | `devspace` 命令找不到 / `Cannot find module ...dist\cli.js` | ① PATH 里没有 npm 全局命令目录 ② **Windows 特有**：POSIX shim 依赖 `sed`/`dirname`/`uname`，PATH 残缺时会算错路径 | 绕开 shim 直连：`node "$(npm root -g)/@waishnav/devspace/dist/cli.js"`，或用 `npx`；macOS/Linux 另确认 `$(npm prefix -g)/bin` 在 PATH 里 |
 | `better-sqlite3` 加载失败 | 原生依赖装在了别的 Node 运行时下 | `npm rebuild better-sqlite3` |

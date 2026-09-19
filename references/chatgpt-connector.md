@@ -288,6 +288,17 @@ UI 侧：插件页「已安装」出现 `DevSpace`，详情页显示 `在聊天�
 ```
 
 > 路径必须是**本机原生写法**：Windows 用反斜杠（`D:\...`），macOS / Linux 用正斜杠（`/home/...`）。
+>
+> ⚠️ **不要给 `/mnt/c/...` 这类 WSL 路径**。DevSpace 是 Windows 进程，它把开头的 `/` 当成**当前盘**的根，
+> 于是 `/mnt/f/projectL` 被解析成 `C:\mnt\f\projectL` → 报
+> `Path is outside allowed roots: /mnt/f/projectL`（报错回显的是**原始输入**，不是解析结果，很容易看歪）。
+> 这种路径通常是从 WSL 里的 `pwd -P` / `git rev-parse --show-toplevel` 抄来的 ——
+> **取路径要在 PowerShell / cmd 里取**，别在 WSL 里取。
+>
+> ⚠️ **junction / symlink 会把路径"换个地方"**。若 `F:\chatgpt_work\projectL` 是指向 `F:\projectL` 的 junction：
+> 交**逻辑路径** → 字符串比较通过（白名单看着"在根内"，其实读写的是根外）；
+> 交**真实路径** → 被拒（`F:\projectL` 不在白名单里）。
+> 想把真实路径也用起来，就把它一起加进 `allowedRoots`。先 `realpath` 看一眼目标落在哪。
 
 同一会话内 `open_workspace` 返回的 `workspace_id` 要一直复用；
 白名单内可以自由切换/打开多个 workspace（各有独立 `workspace_id`）。

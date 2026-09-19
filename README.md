@@ -520,7 +520,8 @@ On macOS / Linux pass forward-slash roots instead (e.g. `/home/you/projects/my-a
 | Funnel unavailable | The fallback path in `references/troubleshooting.md` (cloudflared) |
 | Installed, but "command not found" | `references/cross-platform.md` (PATH not refreshed / Homebrew not on PATH / npm global bin dir not on PATH) |
 | `tailscale` permission errors on Linux | `sudo tailscale up --operator=$USER`, see `references/cross-platform.md` |
-| Path is in the allow-list yet rejected | Linux is case-sensitive: `~/Projects` and `~/projects` are different directories |
+| Path is in the allow-list yet rejected | (1) Linux is case-sensitive: `~/Projects` and `~/projects` are different directories; (2) the directory is a **junction / symlink** whose real target is outside the root (the checker does not resolve links) |
+| The error contains a WSL path like `/mnt/f/...` | You passed a WSL-style path. DevSpace is a Windows process, so `/mnt/f/x` resolves to `C:\mnt\f\x` and is always rejected. Use the native form `F:\x` — and read paths from PowerShell/cmd, not from inside WSL |
 | `download_artifact` tool missing in ChatGPT | Expected — that tool is only registered on Linux |
 
 ---

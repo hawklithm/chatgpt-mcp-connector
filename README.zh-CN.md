@@ -465,7 +465,8 @@ macOS / Linux 把 `--roots` 换成正斜杠路径（如 `/home/you/projects/my-a
 | Funnel 用不了 | `references/troubleshooting.md` 的降级路径（cloudflared） |
 | 装了却说「找不到命令」 | `references/cross-platform.md`（PATH 未刷新 / Homebrew 不在 PATH / npm 全局命令目录不在 PATH） |
 | Linux 上 `tailscale` 报权限错误 | `sudo tailscale up --operator=$USER`，见 `references/cross-platform.md` |
-| 路径在白名单里却报 `path is outside allowed roots` | Linux 大小写敏感：`~/Projects` 与 `~/projects` 是两个目录 |
+| 路径在白名单里却报 `path is outside allowed roots` | ① Linux 大小写敏感（`~/Projects` 与 `~/projects` 是两个目录）；② 那个目录是 **junction / symlink**，真实目标在白名单外（检查器不解析链接） |
+| 报错里带 `/mnt/f/...` 这种 WSL 路径 | 给了 WSL 写法。DevSpace 是 Windows 进程，`/mnt/f/x` 会被解析成 `C:\mnt\f\x` → 必然被拒。改成本机原生 `F:\x`；取路径别在 WSL 里取 |
 | ChatGPT 里看不到 `download_artifact` 工具 | 正常 —— 该工具只在 Linux 上注册 |
 
 ---
