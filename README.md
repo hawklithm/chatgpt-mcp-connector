@@ -78,17 +78,26 @@ Copy the block below **verbatim to WorkBuddy / your agent** and it will install 
 ```text
 Please install the chatgpt-mcp-connector skill locally for me:
 
-Clone the GitHub repository hawklithm/chatgpt-mcp-connector into
-~/.workbuddy/skills/chatgpt-mcp-connector, then validate it with skill-creator's
-quick_validate.py and confirm it prints "Skill is valid!". Finally read me the description
-from SKILL.md so I can confirm it will be recognized.
+Repository: https://github.com/hawklithm/chatgpt-mcp-connector
+Clone it into your skill directory —
+  macOS / Linux : ~/.workbuddy/skills/chatgpt-mcp-connector
+  Windows       : %USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector
+(On Windows `~` is NOT expanded by cmd or PowerShell — use %USERPROFILE%. Quote the path if it
+contains spaces.)
+
+  git clone https://github.com/hawklithm/chatgpt-mcp-connector.git "<target-dir>"
+
+Then validate it with skill-creator's quick_validate.py and confirm it prints "Skill is valid!".
+Finally read me the description from SKILL.md so I can confirm it will be recognized.
 ```
 
-Or do it yourself — two commands:
+Or do it yourself — two commands (pick the line for your platform):
 
 ```bash
 # 1. Clone into the user-level skill directory (available across all projects)
 git clone https://github.com/hawklithm/chatgpt-mcp-connector.git ~/.workbuddy/skills/chatgpt-mcp-connector
+#    Windows (cmd / PowerShell): `~` is not expanded — use %USERPROFILE%
+git clone https://github.com/hawklithm/chatgpt-mcp-connector.git "%USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector"
 
 # 2. Validate
 python <skill-creator>/scripts/quick_validate.py ~/.workbuddy/skills/chatgpt-mcp-connector
@@ -98,11 +107,11 @@ python <skill-creator>/scripts/quick_validate.py ~/.workbuddy/skills/chatgpt-mcp
 
 | Location | Scope | When to use |
 | --- | --- | --- |
-| `~/.workbuddy/skills/` | User-level, **all projects** | Recommended — install once, works everywhere |
+| `~/.workbuddy/skills/` (Windows: `%USERPROFILE%\.workbuddy\skills\`) | User-level, **all projects** | Recommended — install once, works everywhere |
 | `<project>/.workbuddy/skills/` | Project-level, shared with the repo | Team work — anyone who clones the project gets it |
 
 > If your harness uses a different skill-directory convention, installing there works too — just swap the
-> paths in the prompt below to match.
+> paths in the prompt below to match. On Windows, quote any path that contains spaces.
 
 No restart needed. The next time you mention "connect my local MCP to ChatGPT", it triggers.
 
@@ -126,17 +135,35 @@ Goal: get a local MCP server (DevSpace) running on this machine so the ChatGPT w
 
 == Setup ==
 
-1) Install the skill (idempotent — skip if already present):
-   Clone the GitHub repository hawklithm/chatgpt-mcp-connector into
-   ~/.workbuddy/skills/chatgpt-mcp-connector
-   (if your harness uses a different skill-directory convention, install there instead and
-    substitute that path everywhere below)
+0) Fix two path variables first. Everywhere below, substitute the real values for <SKILL_DIR> and
+   <PROJECT_DIR>:
 
-2) Read ~/.workbuddy/skills/chatgpt-mcp-connector/SKILL.md in full.
+   <SKILL_DIR> = where this skill is installed
+       macOS / Linux : ~/.workbuddy/skills/chatgpt-mcp-connector
+       Windows       : %USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector
+   <PROJECT_DIR> = the directory ChatGPT may access (Step 3 asks me)
+
+   ⚠️ Windows specifics:
+     - `~` is NOT expanded by cmd or PowerShell — use %USERPROFILE% there. It does work in Git Bash.
+     - Quote any path containing spaces (e.g. "C:\Program Files\Git\bin"), otherwise it gets
+       truncated at the space.
+     - `&&` works in cmd and PowerShell 7+; PowerShell 5.1 does not support it — run the two
+       commands on separate lines instead.
+
+1) Install the skill (idempotent — skip if already present). Repository:
+       https://github.com/hawklithm/chatgpt-mcp-connector
+   Clone it into <SKILL_DIR>:
+       git clone https://github.com/hawklithm/chatgpt-mcp-connector.git "<SKILL_DIR>"
+   If git itself is not on PATH, install Git for Windows first per
+   <SKILL_DIR>/references/env-setup.md.
+   If your harness uses a different skill-directory convention, install there and substitute that
+   path for <SKILL_DIR> everywhere.
+
+2) Read <SKILL_DIR>/SKILL.md in full.
    It is the authoritative procedure — follow it, not your own assumptions.
-   Then read references/cross-platform.md and apply the section for this OS.
+   Then read <SKILL_DIR>/references/cross-platform.md and apply only the section for this OS.
 
-3) Ask me which directory ChatGPT may access; call it PROJECT_DIR.
+3) Ask me which directory ChatGPT may access; call it <PROJECT_DIR>.
 
 == Execution ==
 
@@ -145,20 +172,26 @@ next — then continue. Whenever a step is marked 🙋 in SKILL.md, STOP AND ASK
 by a human in a browser, and you cannot substitute for that.
 
 Stage 0  Environment self-check (read-only first)
-    node ~/.workbuddy/skills/chatgpt-mcp-connector/scripts/env-check.mjs
+    node "<SKILL_DIR>/scripts/env-check.mjs"
     Show me the missing items and the exact install commands you intend to run.
     WAIT for me to approve, then re-run with --install.
     Pass: output ends with "✅ 全部就绪" and exit code 0.
     Note: right after installing, PATH is not refreshed, so it can still exit 1 — open a new terminal
     and re-run rather than reporting a false green.
+    ⚠️ On Windows there is one extra hard criterion: **Bash must be [ok]**.
+       If it shows [unavailable] with the path C:\Windows\System32\bash.exe, DevSpace has picked the
+       WSL launcher instead of a real shell — and then EVERY command fails, `echo` included.
+       Fix it per <SKILL_DIR>/references/troubleshooting.md → "Windows: bash shadowed by the WSL
+       launcher" before going further, and restart devspace serve afterwards — the fix only takes
+       effect on restart.
 
 Stage 1  Install DevSpace
     npm install -g @waishnav/devspace
     Pass: devspace -v prints a version.
 
 Stage 2  Install and log in to Tailscale
-    Install it if missing (use the command for this OS from references/cross-platform.md), then run
-    tailscale up.
+    Install it if missing (use the command for this OS from <SKILL_DIR>/references/cross-platform.md),
+    then run tailscale up.
     🙋 PAUSE: it prints a login link; I must open it in a browser and approve the device joining my
     tailnet.
     Pass: tailscale status shows Self with an address starting 100.
@@ -173,14 +206,21 @@ Stage 3  Open the public tunnel
           "proxy http://127.0.0.1:7676".
 
 Stage 4  Write the DevSpace config
-    Show me what would change first:
-      node ~/.workbuddy/skills/chatgpt-mcp-connector/scripts/devspace-bootstrap.mjs \
-           apply --roots "PROJECT_DIR" --dry-run
+    Show me what would change first (keep it on ONE line — backslash continuations are bash-only and
+    break in Windows shells):
+      node "<SKILL_DIR>/scripts/devspace-bootstrap.mjs" apply --roots "<PROJECT_DIR>" --dry-run
     Once I confirm, re-run without --dry-run to actually write it.
     Pass: the serve log's "allowed roots:" line matches what I asked for.
 
 Stage 5  Start the server
-    cd PROJECT_DIR && devspace serve        # must stay running; if it stops, ChatGPT disconnects
+    Change into <PROJECT_DIR> first, then run devspace serve   # must stay running; if it stops,
+                                                              # ChatGPT disconnects
+    ⚠️ Windows: if `where git` shows Git for Windows is NOT under %ProgramFiles%\Git (very common —
+       it may live on another drive), starting directly makes DevSpace pick the WSL launcher again and
+       the shell tool dies. In that case prepend Git's bin to PATH first — one line in cmd:
+         set "PATH=<Git install root>\bin;%PATH%" && devspace serve
+       Derive <Git install root> from `where git` (drop the trailing \cmd\git.exe), or simply copy the
+       line env-check already filled in for you under "fix ①".
     Pass: http://127.0.0.1:7676/healthz returns 200, and https://<funnel-domain>/healthz returns 200.
     Note: https://<funnel-domain>/mcp returning 401 is CORRECT — that is the OAuth entry point, not a
     failure.
@@ -206,9 +246,12 @@ Stage 6  Create the ChatGPT connector and authorize
 - Do not run any installer without my explicit approval for that specific command.
 - Never print, echo, or ask me to paste the Owner password into the chat. Only tell me where it lives.
 - Never use tailscale funnel --set-path; always proxy the whole port.
-- If any step fails, read references/troubleshooting.md before improvising.
+- If any step fails, read <SKILL_DIR>/references/troubleshooting.md before improvising.
 - If your environment contradicts an assumption in the docs (version, path, shell), say so instead of
   guessing.
+- Decide whether a dependency is usable by running its command and reading the output
+  (`--version` / `where` / `which`). Do not conclude anything from "the file exists" — "the file is
+  there but will not run" is a real and common case.
 
 Start with Stage 0 now.
 ```
@@ -217,11 +260,15 @@ Start with Stage 0 now.
 
 | Stage | The easy mistake when nobody is watching | Constraint in the prompt |
 | --- | --- | --- |
+| all | Giving only the repo *path* and no URL, so the agent cannot tell where to download from; hard-coding POSIX `~/...` paths that simply do not resolve on Windows | States `https://github.com/hawklithm/chatgpt-mcp-connector` and the full `git clone` command up front; defines `<SKILL_DIR>` with both the POSIX and the Windows `%USERPROFILE%` form |
+| all | Using bash-only backslash line continuations or `~` — a Windows shell errors out | Commands are written as single lines with quoted paths; notes that `~` is not expanded and that PowerShell 5.1 lacks `&&` |
 | 0 | Running `--install` without asking, or reading "PATH not refreshed yet" as an install failure | Read-only first → list commands → wait for approval; exit-code semantics spelled out |
+| 0 | On Windows, ignoring Bash showing `[unavailable]` (the WSL launcher has shadowed Git Bash) and only discovering at Stage 5 that every command fails | Makes "Bash must be `[ok]`" a hard Stage-0 criterion and says serve must be restarted after fixing it |
 | 2 | Re-running `tailscale up` in a loop while it is actually waiting on your browser | Explicitly designated a 🙋 pause point |
 | 3 | Reflexively adding `--set-path=/mcp` → public `/mcp` 404s | Hard prohibition, with the reason |
 | 4 | Writing straight to disk, or invoking the interactive `devspace init` and hanging | `--dry-run` diff is mandatory first |
 | 5 | Misreading the public `/mcp` 401 as a failure and "fixing" the server | States plainly that 401 is correct |
+| 5 | On Windows, running `devspace serve` directly when Git is not under `%ProgramFiles%\Git` — the shell tool is then dead | Gives the exact one-liner that prepends Git's `bin` to PATH before starting |
 | 6 | Creating the connector under Settings → `Something went wrong` | Points at the `plugins` page |
 | 6 | Getting the user to paste the Owner password into the chat | Forbidden; the agent tells you the file location instead |
 
@@ -293,9 +340,26 @@ chatgpt-mcp-connector/
 
 ## Bundled scripts
 
+Resolve the scripts directory once for your platform, then use `$SK` throughout:
+
 ```bash
+# macOS / Linux (bash, zsh)
 SK=~/.workbuddy/skills/chatgpt-mcp-connector/scripts
 ```
+
+```bat
+:: Windows (cmd.exe)
+set "SK=%USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector\scripts"
+```
+
+```powershell
+# Windows (PowerShell)
+$SK = "$env:USERPROFILE\.workbuddy\skills\chatgpt-mcp-connector\scripts"
+```
+
+> **On Windows, substitute `$SK`** in the examples below: cmd wants `%SK%\env-check.mjs`,
+> PowerShell wants `"$SK\env-check.mjs"`. Note that `~` is **not** expanded by cmd or PowerShell,
+> which is why `%USERPROFILE%` / `$env:USERPROFILE` is used above. Quote any path containing spaces.
 
 ### `env-check.mjs` — environment self-check + auto-install
 
@@ -327,13 +391,12 @@ Exit codes: `0` all ready / `1` something missing / `2` the script itself failed
 
 ```bash
 node $SK/devspace-bootstrap.mjs check        # read-only: Node / tailscale / tunnel / domain / current config
-node $SK/devspace-bootstrap.mjs apply \
-     --roots "D:\projects\my-app" [--port 7676] [--host 127.0.0.1] \
-     [--public-base-url https://x.ts.net] [--subagents codex,claude] \
-     [--dry-run] [--force]
+node $SK/devspace-bootstrap.mjs apply --roots "D:\projects\my-app" [--port 7676] [--host 127.0.0.1] [--public-base-url https://x.ts.net] [--subagents codex,claude] [--dry-run] [--force]
 node $SK/devspace-bootstrap.mjs rollback [--config|--auth]   # restore from .bak
 ```
 
+That `apply` line is deliberately single-line: backslash continuation (`\`) is bash-only syntax —
+cmd and PowerShell swallow the `\` as a literal character.
 On macOS / Linux pass forward-slash roots instead (e.g. `/home/you/projects/my-app`).
 
 **Behavioural guarantees**

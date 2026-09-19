@@ -7,8 +7,11 @@
 下文用到的脚本目录变量（与 SKILL.md 一致）：
 
 ```bash
-SK=~/.workbuddy/skills/chatgpt-mcp-connector/scripts
+SK=~/.workbuddy/skills/chatgpt-mcp-connector/scripts          # macOS / Linux
+# Windows: set "SK=%USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector\scripts"
 ```
+
+Windows 上 `~` 不展开；示例里的 `$SK` 换成 `%SK%`（cmd）或 `"$SK"`（PowerShell）。
 
 ## 容错设计：先定原则，再看具体怎么坏
 

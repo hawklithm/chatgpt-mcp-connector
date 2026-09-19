@@ -87,8 +87,13 @@ Funnel 未启用这类情况时，会就地打 `🙋` 并在输出末尾汇总�
 → ChatGPT 插件页建连接器 + 授权。
 
 ```bash
-SK=~/.workbuddy/skills/chatgpt-mcp-connector/scripts
+SK=~/.workbuddy/skills/chatgpt-mcp-connector/scripts          # macOS / Linux
+# Windows cmd / PowerShell: %USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector\scripts
 ```
+
+> **Windows 下 `~` 不展开**，要用 `%USERPROFILE%`（cmd）或 `$env:USERPROFILE`（PowerShell）：
+> `set "SK=%USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector\scripts"`；
+> 示例中的 `$SK` 相应换成 `%SK%`（cmd）或 `"$SK"`（PowerShell）。路径含空格必须加引号。
 
 ### ① `scripts/env-check.mjs` —— 环境自检 + 缺失自动补齐
 
@@ -120,12 +125,12 @@ node $SK/env-check.mjs --install --only node,git   # 只装指定项
 
 ```bash
 node $SK/devspace-bootstrap.mjs check       # 只读体检：Node/tailscale/隧道/域名推导/现有配置
-node $SK/devspace-bootstrap.mjs apply \
-     --roots "D:\projects\my-app" [--port 7676] [--host 127.0.0.1] \
-     [--public-base-url https://x.ts.net] [--subagents codex,claude] \
-     [--dry-run] [--force]
+node $SK/devspace-bootstrap.mjs apply --roots "D:\projects\my-app" [--port 7676] [--host 127.0.0.1] [--public-base-url https://x.ts.net] [--subagents codex,claude] [--dry-run] [--force]
 node $SK/devspace-bootstrap.mjs rollback [--config|--auth]   # 从 .bak 恢复
 ```
+
+`apply` 写成一行是刻意的：反斜杠续行 `\` 是 bash 专有语法，cmd / PowerShell 会把它当普通字符。
+macOS / Linux 把 `--roots` 换成正斜杠路径（如 `/home/you/projects/my-app`）。
 
 行为保证：`check` 绝不写盘；`apply` 只改**显式传入**的键、**绝不覆盖已有 `ownerToken`**、
 内容无变化时不动文件（幂等）；自动从 Tailscale 推导 `publicBaseUrl`。

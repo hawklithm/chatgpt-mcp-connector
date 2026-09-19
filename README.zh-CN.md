@@ -68,16 +68,25 @@
 ```text
 请帮我把 chatgpt-mcp-connector 这个 Skill 安装到本地：
 
-从 GitHub 克隆 hawklithm/chatgpt-mcp-connector 到 ~/.workbuddy/skills/chatgpt-mcp-connector，
+仓库地址：https://github.com/hawklithm/chatgpt-mcp-connector
+克隆到你的 skill 目录 ——
+  macOS / Linux : ~/.workbuddy/skills/chatgpt-mcp-connector
+  Windows       : %USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector
+（Windows 上 `~` 不会被展开，必须用 %USERPROFILE%；路径含空格要加引号）
+
+  git clone https://github.com/hawklithm/chatgpt-mcp-connector.git "<目标目录>"
+
 装好后用 skill-creator 的 quick_validate.py 校验一次，确认返回 "Skill is valid!"，
 最后把 SKILL.md 里的 description 念给我看一下，确认它已经能被正确识别。
 ```
 
-如果你想自己动手，命令行是两条：
+如果你想自己动手，命令行是两条（按平台挑一行）：
 
 ```bash
 # 1. 克隆到用户级 skill 目录（跨项目可用）
 git clone https://github.com/hawklithm/chatgpt-mcp-connector.git ~/.workbuddy/skills/chatgpt-mcp-connector
+#    Windows（cmd / PowerShell）：`~` 不会被展开，用 %USERPROFILE%
+git clone https://github.com/hawklithm/chatgpt-mcp-connector.git "%USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector"
 
 # 2. 校验
 python <skill-creator>/scripts/quick_validate.py ~/.workbuddy/skills/chatgpt-mcp-connector
@@ -87,10 +96,11 @@ python <skill-creator>/scripts/quick_validate.py ~/.workbuddy/skills/chatgpt-mcp
 
 | 位置 | 作用范围 | 适用场景 |
 | --- | --- | --- |
-| `~/.workbuddy/skills/` | 用户级，**所有项目**可用 | 推荐，一次装好到处能用 |
+| `~/.workbuddy/skills/`（Windows：`%USERPROFILE%\.workbuddy\skills\`） | 用户级，**所有项目**可用 | 推荐，一次装好到处能用 |
 | `<项目>/.workbuddy/skills/` | 项目级，随仓库共享 | 团队协作、想让同事克隆项目就有 |
 
 > 如果你的 harness 用的是别的 skill 目录约定，装到那儿也一样 —— 只要 prompt 里的路径跟着换即可。
+> Windows 上含空格的路径记得加引号。
 
 装好后无需重启，下一次对话里提到「把本地 MCP 接入 ChatGPT」它就会被触发。
 
@@ -112,16 +122,31 @@ prompt 只负责把 harness 引到那儿、并逐阶段给出验收信号与暂�
 
 == 准备 ==
 
-1) 安装 skill（幂等，已装过就跳过）：
-   从 GitHub 克隆 hawklithm/chatgpt-mcp-connector 到
-   ~/.workbuddy/skills/chatgpt-mcp-connector
-   （如果你的 harness 用别的 skill 目录约定，就装到那里，并把下面所有路径换成实际路径）
+0) 先确定两个路径变量。下面凡出现 <SKILL_DIR> / <PROJECT_DIR>，都替换成实际值：
 
-2) 完整读一遍 ~/.workbuddy/skills/chatgpt-mcp-connector/SKILL.md。
+   <SKILL_DIR> = 这个 skill 装在哪
+       macOS / Linux : ~/.workbuddy/skills/chatgpt-mcp-connector
+       Windows       : %USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector
+   <PROJECT_DIR> = 允许 ChatGPT 读写的目录（第 3 步问我）
+
+   ⚠️ Windows 特别注意：
+     - `~` 在 cmd / PowerShell 里**不会被展开**，这两种 shell 里必须用 %USERPROFILE%；
+       在 Git Bash 里 `~` 可以正常用。
+     - 含空格的路径**必须加引号**（如 "C:\Program Files\Git\bin"），不加会被从空格处截断。
+     - `&&` 在 cmd 与 PowerShell 7+ 可用；老的 PowerShell 5.1 不支持，请拆成两行执行。
+
+1) 安装 skill（幂等，已装过就跳过）。仓库地址：
+       https://github.com/hawklithm/chatgpt-mcp-connector
+   克隆到 <SKILL_DIR>：
+       git clone https://github.com/hawklithm/chatgpt-mcp-connector.git "<SKILL_DIR>"
+   如果 git 本身不在 PATH 上，先按 <SKILL_DIR>/references/env-setup.md 装 Git for Windows。
+   如果你的 harness 用别的 skill 目录约定，就装到那里、并把 <SKILL_DIR> 换成实际路径。
+
+2) 完整读一遍 <SKILL_DIR>/SKILL.md。
    它是权威流程 —— 按它做，不要按你自己的印象做。
-   然后再读 references/cross-platform.md（按你的操作系统对号入座）。
+   然后再读 <SKILL_DIR>/references/cross-platform.md，只按你的操作系统那一节对号入座。
 
-3) 问我「允许 ChatGPT 访问哪个目录」，记为 PROJECT_DIR。
+3) 问我「允许 ChatGPT 访问哪个目录」，记为 <PROJECT_DIR>。
 
 == 执行 ==
 
@@ -129,17 +154,22 @@ prompt 只负责把 harness 引到那儿、并逐阶段给出验收信号与暂�
 凡是 SKILL.md 里标了 🙋 的步骤，**停下来问我** —— 那些只能在浏览器里由人完成，你代替不了。
 
 阶段 0  环境自检（先只读）
-    node ~/.workbuddy/skills/chatgpt-mcp-connector/scripts/env-check.mjs
+    node "<SKILL_DIR>/scripts/env-check.mjs"
     把缺失项和你打算执行的安装命令列给我看，**等我说同意**，再加 --install 重跑。
     通过标准：输出以「✅ 全部就绪」结尾，退出码 0。
     注意：刚装完但 PATH 未刷新会返回 1，这时要新开终端再跑，不要报假绿。
+    ⚠️ Windows 上多一条硬性标准：**Bash 那一项必须是 [ok]**。
+       如果显示 [不可用] 且路径是 C:\Windows\System32\bash.exe，说明 DevSpace 选中了
+       WSL 启动器而不是真 shell —— 那会让后面**所有**命令失败（连 echo 都不行）。
+       先照 <SKILL_DIR>/references/troubleshooting.md 的「Windows：bash 被 WSL 启动器顶掉」
+       修好再往下走；而且改完**必须重启 devspace serve** 才生效。
 
 阶段 1  安装 DevSpace
     npm install -g @waishnav/devspace
     通过标准：devspace -v 能输出版本号。
 
 阶段 2  安装并登录 Tailscale
-    缺就装（按 references/cross-platform.md 的对应平台命令），然后执行 tailscale up。
+    缺就装（按 <SKILL_DIR>/references/cross-platform.md 的对应平台命令），然后执行 tailscale up。
     🙋 暂停：终端会打印一个登录链接，必须由我用浏览器打开并授权该设备加入 tailnet。
     通过标准：tailscale status 能看到 Self，且 IP 是 100.x。
 
@@ -151,14 +181,19 @@ prompt 只负责把 harness 引到那儿、并逐阶段给出验收信号与暂�
     通过标准：tailscale funnel status 出现 (Funnel on) 以及一行 proxy http://127.0.0.1:7676。
 
 阶段 4  写 DevSpace 配置
-    先用 dry-run 给我看会改什么：
-      node ~/.workbuddy/skills/chatgpt-mcp-connector/scripts/devspace-bootstrap.mjs \
-           apply --roots "PROJECT_DIR" --dry-run
+    先用 dry-run 给我看会改什么（整条写成一行，免得 Windows shell 不认反斜杠续行）：
+      node "<SKILL_DIR>/scripts/devspace-bootstrap.mjs" apply --roots "<PROJECT_DIR>" --dry-run
     我确认后再去掉 --dry-run 落盘。
     通过标准：启动日志里的 "allowed roots:" 一行与我要求的一致。
 
 阶段 5  启动服务
-    cd PROJECT_DIR && devspace serve        # 进程必须常驻，停了 ChatGPT 就断
+    先切到 <PROJECT_DIR>，再执行 devspace serve     # 进程必须常驻，停了 ChatGPT 就断
+    ⚠️ Windows：如果 `where git` 显示 Git for Windows **不在** %ProgramFiles%\Git 下
+       （装在别的盘很常见），直接启动会让 DevSpace 又选中 WSL 启动器、shell 全废。
+       这时要先把 Git 的 bin 前置到 PATH 再启动，cmd 里就是一行：
+         set "PATH=<Git 安装根>\bin;%PATH%" && devspace serve
+       <Git 安装根> 从 `where git` 的结果反推（去掉末尾的 \cmd\git.exe），
+       或直接照 env-check 输出里「修法 ①」替你填好的那行抄。
     通过标准：http://127.0.0.1:7676/healthz 返回 200，
               且 https://<隧道域名>/healthz 也返回 200。
     注意：https://<隧道域名>/mcp 返回 **401 是正确的**，那是 OAuth 的触发点，不是故障。
@@ -182,8 +217,10 @@ prompt 只负责把 harness 引到那儿、并逐阶段给出验收信号与暂�
 - 没有我针对某条命令的明确同意，不要执行任何安装。
 - 绝不打印、回显、或要求我把 Owner password 贴进聊天；只告诉我它在哪里。
 - 绝不使用 tailscale funnel --set-path；始终代理整个端口。
-- 任何一步失败，先读 references/troubleshooting.md，不要自己乱试。
+- 任何一步失败，先读 <SKILL_DIR>/references/troubleshooting.md，不要自己乱试。
 - 如果你的环境与文档里的前提不符（版本、路径、shell），直接说出来，不要猜。
+- 判断依赖是否可用，一律跑它的命令看输出（`--version` / `where` / `which`）；
+  不要因为「文件存在」就下结论，「文件在但跑不起来」是真实且常见的情况。
 
 现在从阶段 0 开始。
 ```
@@ -192,11 +229,15 @@ prompt 只负责把 harness 引到那儿、并逐阶段给出验收信号与暂�
 
 | 阶段 | 如果没人盯着，最容易怎么错 | prompt 里对应的约束 |
 | --- | --- | --- |
+| 全程 | 只给了「仓库路径」不给 URL，agent 不知道去哪下载；路径写死成 POSIX 的 `~/...`，在 Windows 上直接失效 | 开头就给出 `https://github.com/hawklithm/chatgpt-mcp-connector` 与完整 `git clone` 命令；定义 `<SKILL_DIR>` 并同时给出 Windows 的 `%USERPROFILE%` 写法 |
+| 全程 | 用 bash 专有的反斜杠续行 / `~`，Windows shell 报错 | 命令一律写成一行、路径加引号；注明 `~` 不展开、PS 5.1 不支持 `&&` |
 | 0 | 不打招呼就 `--install`，或把「刚装完 PATH 没刷新」当成装失败 | 先只读 → 列命令 → 等同意；并写明退出码语义 |
+| 0 | Windows 上无视 Bash 显示 `[不可用]`（其实是 WSL 启动器顶掉了 Git Bash），一路跑到阶段 5 才发现所有命令全废 | 把「Bash 必须是 `[ok]`」立成阶段 0 的硬性标准，并指明改完必须重启 serve |
 | 2 | 反复重跑 `tailscale up`，其实在等你去浏览器授权 | 明确划成 🙋 暂停点 |
 | 3 | 顺手加 `--set-path=/mcp` → 公网 `/mcp` 404 | 直接写死禁令 + 原因 |
 | 4 | 直接落盘，或调用交互式 `devspace init` 卡住 | 强制先 `--dry-run` 给 diff |
 | 5 | 把公网 `/mcp` 的 401 误判成故障，回头去改服务端 | 写明「401 是正确的」 |
+| 5 | Windows 上 Git 不在 `%ProgramFiles%\Git` 时直接 `devspace serve`，shell 工具全废 | 给出「先把 Git 的 bin 前置到 PATH 再启动」的具体一行命令 |
 | 6 | 在「设置」里建连接器 → `Something went wrong` | 指明必须在 `plugins` 页 |
 | 6 | 让用户把 Owner password 贴进聊天 | 明确禁止，改为「告诉你文件位置」 |
 
@@ -267,9 +308,26 @@ chatgpt-mcp-connector/
 
 ## 自带脚本
 
+脚本目录按平台这样取一次，后面统一用 `$SK` 指代：
+
 ```bash
+# macOS / Linux（bash、zsh）
 SK=~/.workbuddy/skills/chatgpt-mcp-connector/scripts
 ```
+
+```bat
+:: Windows（cmd.exe）
+set "SK=%USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector\scripts"
+```
+
+```powershell
+# Windows（PowerShell）
+$SK = "$env:USERPROFILE\.workbuddy\skills\chatgpt-mcp-connector\scripts"
+```
+
+> **Windows 下把示例里的 `$SK` 换掉**：cmd 用 `%SK%\env-check.mjs`，PowerShell 用 `"$SK\env-check.mjs"`。
+> `~` 在 cmd / PowerShell 里**不会展开**，所以上面用的是 `%USERPROFILE%` / `$env:USERPROFILE`。
+> 路径含空格时务必加引号。
 
 ### `env-check.mjs` —— 环境自检 + 缺失自动补齐
 
@@ -298,13 +356,11 @@ node $SK/env-check.mjs --install --only node,git   # 只装指定项
 
 ```bash
 node $SK/devspace-bootstrap.mjs check        # 只读体检：Node / tailscale / 隧道 / 域名推导 / 现有配置
-node $SK/devspace-bootstrap.mjs apply \
-     --roots "D:\projects\my-app" [--port 7676] [--host 127.0.0.1] \
-     [--public-base-url https://x.ts.net] [--subagents codex,claude] \
-     [--dry-run] [--force]
+node $SK/devspace-bootstrap.mjs apply --roots "D:\projects\my-app" [--port 7676] [--host 127.0.0.1] [--public-base-url https://x.ts.net] [--subagents codex,claude] [--dry-run] [--force]
 node $SK/devspace-bootstrap.mjs rollback [--config|--auth]   # 从 .bak 恢复
 ```
 
+上面写成一行是有意的：反斜杠续行 `\` 是 bash 专有语法，cmd / PowerShell 会直接把它当字符吞掉。
 macOS / Linux 把 `--roots` 换成正斜杠路径（如 `/home/you/projects/my-app`）。
 
 **行为保证**

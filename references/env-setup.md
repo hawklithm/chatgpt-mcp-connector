@@ -9,10 +9,14 @@
 **第一步永远是跑自检，不要凭感觉假设环境是好的。**
 
 ```bash
-SK=~/.workbuddy/skills/chatgpt-mcp-connector/scripts
+SK=~/.workbuddy/skills/chatgpt-mcp-connector/scripts          # macOS / Linux
+# Windows: set "SK=%USERPROFILE%\.workbuddy\skills\chatgpt-mcp-connector\scripts"
 node $SK/env-check.mjs              # 只读自检
 node $SK/env-check.mjs --install    # 确认缺失项后再加这个（先征得用户同意）
 ```
+
+Windows 上 `~` 不展开，用 `%USERPROFILE%`（cmd）或 `$env:USERPROFILE`（PowerShell）；
+示例里的 `$SK` 换成 `%SK%`（cmd）或 `"$SK"`（PowerShell）。
 
 ### 依赖清单与要求
 
