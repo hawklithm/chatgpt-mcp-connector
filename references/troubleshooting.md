@@ -140,20 +140,21 @@ node $SK/env-check.mjs
 
 ### 三条修法（按侵入性从低到高，任选其一）
 
-> 具体路径不用自己拼 —— `node $SK/env-check.mjs` 会按**你机器上的实际安装位置**
-> 把下面三条命令生成好（它从 PATH 上的 `git.exe` 反推同一份安装里的 Git Bash，
-> 所以 Git 装在哪个盘都对）。下面用「Git 装在 `C:\Program Files\Git`」举例：
+> 下面用 `<GIT>` 代表你的 Git for Windows 安装根目录（默认是 `C:\Program Files\Git`，
+> 装在别的盘则形如 `<盘符>:\Program Files\Git`）。
+> **不用自己拼** —— `node $SK/env-check.mjs` 会把这三条命令按你机器的实际位置填好
+> （它从 PATH 上的 `git.exe` 反推同一份安装里的 Git Bash，所以 Git 装在哪个盘都对）。
 
 ```bash
 # ① 临时：启动 serve 时把 Git 的 bin 前置到 PATH（无需管理员）
 #    cmd:
-set "PATH=C:\Program Files\Git\bin;%PATH%" && devspace serve
+set "PATH=<GIT>\bin;%PATH%" && devspace serve
 #    bash:
 PATH="<GIT 的 POSIX 形式>/bin:$PATH" devspace serve
 
 # ② 一劳永逸：建目录 junction，让 DevSpace 的第 ① 步就能命中（需管理员终端）
-mklink /J "C:\Program Files\Git" "C:\Program Files\Git"
-#    撤销：rmdir "C:\Program Files\Git"   （只删链接，不动 D 盘的真身）
+mklink /J "C:\Program Files\Git" "<GIT>"
+#    撤销：rmdir "C:\Program Files\Git"   （只删这个链接，不动 <GIT> 里的真身）
 
 # ③ 把 Git 的 bin 前置到【系统】PATH
 #    必须是「系统变量」而不是「用户变量」—— 见下方「为什么这样排」

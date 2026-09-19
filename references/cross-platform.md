@@ -77,8 +77,8 @@ DevSpace 的 shell 工具解析顺序（源码 `pi-coding-agent/dist/utils/shell
 >
 > | # | 做法 | 权限 |
 > | --- | --- | --- |
-> | ① | 启动 serve 时前置 PATH：`set "PATH=C:\Program Files\Git\bin;%PATH%"` | 无需管理员 |
-> | ② | 建 junction：`mklink /J "C:\Program Files\Git" "C:\Program Files\Git"` | 需管理员 |
+> | ① | 启动 serve 时前置 PATH：`set "PATH=<你的Git安装路径>\bin;%PATH%"` | 无需管理员 |
+> | ② | 建 junction：`mklink /J "C:\Program Files\Git" "<你的Git安装路径>"` | 需管理员 |
 > | ③ | 把 Git 的 bin 前置到**系统** PATH（不是用户变量） | 需管理员 |
 >
 > 路径不用自己拼 —— `env-check` 会**按你机器上的实际安装位置**把三条命令生成好
